@@ -428,8 +428,12 @@ Drei Ebenen, alle im Session-Verzeichnis:
 |---|---|---|
 | `gui_vlm_cache.json` | VLM-Verdikte | Inhalt des Kompositbilds + Modell + `PROMPT_VERSION` |
 | `audio_llm_cache.json` | LLM-Verdikte | Inhalt aller Sätze + Modell + `PROMPT_VERSION` |
-| `<modalität>_evidence.npz` | die fertige `BoundaryEvidence` | Inhalt von `recording.mp4` und `events.json` + Quelltext der beteiligten Module + deren Konstanten zur Laufzeit |
-| `video_activity.npz` | der pHash-Aktivitätsscan (Aktivität je Frame, Framezeiten, fps) | Inhalt von `recording.mp4` + Rastergröße; wird auch von der Synchronisationsmessung gelesen, damit das Video nicht zweimal dekodiert wird |
+| `<modalität>_evidence.npz` | die fertige `BoundaryEvidence` | keiner — existiert die Datei, wird sie geladen; sonst wird die Modalität berechnet und die Datei geschrieben |
+| `video_activity.npz` | der pHash-Aktivitätsscan (Aktivität je Frame, Framezeiten, fps) | Rastergröße; wird auch von der Synchronisationsmessung gelesen, damit das Video nicht zweimal dekodiert wird |
+
+Aufnahmen werden nach der Erfassung nicht verändert, deshalb gilt eine vorhandene
+Datei als gültig. Wer einen Extraktor ändert und neu rechnen will, löscht die
+betreffende `<modalität>_evidence.npz`.
 
 Die dritte Ebene (`store.py`) macht ein erneutes Öffnen des Feature-Dialogs oder
 einen erneuten Korpuslauf praktisch kostenlos: gemessen 123 s → 0.1 s je Session,

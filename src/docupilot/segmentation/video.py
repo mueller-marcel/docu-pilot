@@ -392,12 +392,9 @@ def _read_frames(video_path: str, wanted: set[int]) -> dict[int, np.ndarray]:
     return frames
 
 
-def _activity_key(session: RecordingSession) -> str:
-    """What the stored scan depends on: the recording bytes and the grid."""
-    return (
-        f"{_ACTIVITY_FORMAT}|{store.file_digest(session.recording_path)}"
-        f"|{_PHASH_SIZE}|{_ACTIVITY_GRID}"
-    )
+# What a stored scan depends on besides the recording, which is never edited: a
+# scan taken on another grid would be read against the wrong threshold.
+_ACTIVITY_KEY = f"{_ACTIVITY_FORMAT}|{_PHASH_SIZE}|{_ACTIVITY_GRID}"
 
 
 def scan_activity(session: RecordingSession, use_cache: bool = True) -> ActivityScan:
@@ -411,7 +408,7 @@ def scan_activity(session: RecordingSession, use_cache: bool = True) -> Activity
     :raises RuntimeError: when the frame times cannot be read (see parse_frame_times).
     """
     path = session.session_dir / _ACTIVITY_FILE
-    key = _activity_key(session) if use_cache else None
+    key = _ACTIVITY_KEY if use_cache else None
 
     if key is not None and path.exists():
         try:
