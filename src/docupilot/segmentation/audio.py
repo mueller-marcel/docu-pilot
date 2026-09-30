@@ -39,6 +39,9 @@ _COMPLETION_POSITION = 0.75
 # and there is no announcement gap to take a median of.
 _LAST_WINDOW_FALLBACK_S = 8.0
 
+# What the LLM said about the narration, kept beside the recording.
+VERDICT_CACHE_FILE = "audio_llm_cache.json"
+
 # Loaded models, one set PER THREAD. Whisper and spaCy take a minute to load
 # and a corpus run transcribes 25 recordings, so reloading per session was the
 # single largest avoidable cost of this modality. Per thread rather than per
@@ -254,7 +257,7 @@ def extract(
     if on_progress is not None:
         on_progress(1, 2)
     cache = (
-        judge.Cache(session.session_dir / "audio_llm_cache.json") if use_cache else None
+        judge.Cache(session.session_dir / VERDICT_CACHE_FILE) if use_cache else None
     )
     judgements = judge.judge([text for _, text in sentences], cache=cache)
     if cache is not None:

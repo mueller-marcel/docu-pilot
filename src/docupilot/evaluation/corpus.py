@@ -11,10 +11,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from docupilot.segmentation import audio, video
+
 RECORDING_FILE = "recording.mp4"
 GROUND_TRUTH_FILE = "ground_truth.json"
-VIDEO_CACHE_FILE = "gui_vlm_cache.json"
-AUDIO_CACHE_FILE = "audio_llm_cache.json"
+VIDEO_CACHE_FILE = video.VERDICT_CACHE_FILE
+AUDIO_CACHE_FILE = audio.VERDICT_CACHE_FILE
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,16 @@ def _count_kinds(ground_truth: Path) -> tuple[int, int]:
     return kinds.count("end"), kinds.count("start")
 
 
+def session_directories(root: Path) -> list[Path]:
+    """
+    The session directories under `root`: `root` itself when it holds a
+    recording, otherwise every direct subdirectory that does, in name order.
+    """
+    if (root / RECORDING_FILE).exists():
+        return [root]
+    return sorted(d for d in root.iterdir() if d.is_dir() and (d / RECORDING_FILE).exists())
+
+
 def scan(root: Path) -> CorpusScan:
     """
     List the sessions under `root`.
@@ -121,15 +133,8 @@ def scan(root: Path) -> CorpusScan:
     :param root: the chosen directory.
     :return: the scan; sessions in name order.
     """
-    candidates = (
-        [root] if (root / RECORDING_FILE).exists()
-        else sorted(
-            d for d in root.iterdir()
-            if d.is_dir() and (d / RECORDING_FILE).exists()
-        )
-    )
     sessions = []
-    for directory in candidates:
+    for directory in session_directories(root):
         ground_truth = directory / GROUND_TRUTH_FILE
         n_end, n_start = _count_kinds(ground_truth) if ground_truth.exists() else (None, 0)
         sessions.append(SessionInfo(

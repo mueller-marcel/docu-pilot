@@ -433,7 +433,9 @@ Drei Ebenen, alle im Session-Verzeichnis:
 
 Aufnahmen werden nach der Erfassung nicht verändert, deshalb gilt eine vorhandene
 Datei als gültig. Wer einen Extraktor ändert und neu rechnen will, löscht die
-betreffende `<modalität>_evidence.npz`.
+betreffende `<modalität>_evidence.npz` — für einen geladenen Korpus über
+*Auswertung › … löschen* (Evidenzkurven, Claude-Caches oder beides).
+Aufnahme, `events.json` und Ground Truth sind davon ausgenommen.
 
 Die dritte Ebene (`store.py`) macht ein erneutes Öffnen des Feature-Dialogs oder
 einen erneuten Korpuslauf praktisch kostenlos: gemessen 123 s → 0.1 s je Session,

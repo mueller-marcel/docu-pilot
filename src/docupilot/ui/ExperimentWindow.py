@@ -11,12 +11,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -27,9 +28,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from docupilot.evaluation import corpus, dataset, experiment
+from docupilot.evaluation import artifacts, corpus, dataset, experiment
 from docupilot.evaluation import report as rep
 from docupilot.recording.session import RecordingSession
+from docupilot.ui.formatting import format_bytes
 from docupilot.ui.report_view import ReportCharts, apply_report
 from docupilot.ui.ReportPdfWriter import write_report_pdf
 from docupilot.ui.widgets.SaturationChartWidget import SaturationChartWidget
@@ -50,6 +52,18 @@ _BUTTON_STYLE = (
 
 _NOTE_STYLE = ("color:#222; font-size:11px; padding:4px 6px; "
                "font-family:Consolas,'Courier New',monospace;")
+
+_DELETION_TITLE = "Generierte Dateien löschen"
+
+# What a loaded corpus offers to delete: (action text, kinds of generated file).
+_DELETION_CHOICES: tuple[tuple[str, frozenset[artifacts.ArtifactKind]], ...] = (
+    ("Evidenzkurven und Aktivitätsscans löschen (.npz)…",
+     frozenset({artifacts.ArtifactKind.LANES})),
+    ("Claude-Caches löschen (.json)…",
+     frozenset({artifacts.ArtifactKind.MODEL_CACHES})),
+    ("Alle generierten Dateien löschen…",
+     frozenset(artifacts.ArtifactKind)),
+)
 
 
 class _ExperimentWorker(QObject):
@@ -137,8 +151,20 @@ class ExperimentWindow(QDialog):
         self._result: rep.Report | None = None
         self._thread: QThread | None = None
         self._worker: _ExperimentWorker | None = None
+        self._deletion_actions = self._create_deletion_actions()
 
         self._build_ui()
+        self._set_deletion_enabled(False)
+
+    @property
+    def deletion_actions(self) -> list[QAction]:
+        """
+        The actions that delete the loaded corpus' generated files.
+
+        The main window puts these very objects into its menu bar, so the menu
+        and this window are always enabled and disabled together.
+        """
+        return list(self._deletion_actions)
 
     # ── Construction ─────────────────────────────────────────────────────
 
@@ -147,6 +173,24 @@ class ExperimentWindow(QDialog):
         button.setStyleSheet(_BUTTON_STYLE)
         button.setEnabled(enabled)
         button.clicked.connect(slot)
+        return button
+
+    def _create_deletion_actions(self) -> list[QAction]:
+        actions = []
+        for text, kinds in _DELETION_CHOICES:
+            action = QAction(text, self)
+            # `triggered` passes `checked`; the default argument binds this loop's kinds.
+            action.triggered.connect(lambda _checked=False, k=kinds: self._delete_artifacts(k))
+            actions.append(action)
+        return actions
+
+    def _deletion_button(self) -> QPushButton:
+        """A button whose drop-down menu offers the deletion actions."""
+        button = QPushButton(_DELETION_TITLE)
+        button.setStyleSheet(_BUTTON_STYLE)
+        menu = QMenu(button)
+        menu.addActions(self._deletion_actions)
+        button.setMenu(menu)
         return button
 
     def _build_ui(self) -> None:
@@ -159,10 +203,11 @@ class ExperimentWindow(QDialog):
         self._cancel_button = self._button("Abbrechen", self._on_cancel, enabled=False)
         self._export_button = self._button("CSV exportieren …", self._on_export, enabled=False)
         self._pdf_button = self._button("Bericht (PDF) …", self._on_export_pdf, enabled=False)
+        self._delete_button = self._deletion_button()
 
         top = QHBoxLayout()
-        for button in (self._choose_button, self._run_button,
-                       self._cancel_button, self._export_button, self._pdf_button):
+        for button in (self._choose_button, self._run_button, self._cancel_button,
+                       self._export_button, self._pdf_button, self._delete_button):
             top.addWidget(button)
         top.addStretch()
         root.addLayout(top)
@@ -257,22 +302,25 @@ class ExperimentWindow(QDialog):
         """Pick a folder of session directories and report what is usable."""
         chosen = QFileDialog.getExistingDirectory(self, "Korpus-Verzeichnis wählen")
         if chosen:
-            self._load_corpus(Path(chosen))
+            self.open_corpus(Path(chosen))
 
-    def run_directory(self, root: Path) -> None:
+    def open_corpus(self, root: Path) -> None:
         """
-        Load a corpus directory and start the full workflow at once.
+        Load a corpus directory without evaluating it.
 
-        The menu entry point: select a directory, then segment and evaluate
-        without a second click. Ignored while a run is already in progress.
+        The evaluation starts only from "Auswertung starten", so choosing a corpus
+        never launches the extraction by itself. Refused while a run is in
+        progress: that run keeps its corpus.
         """
-        if self._thread is not None and self._thread.isRunning():
+        if self._is_running():
+            self._status.setText(
+                "Auswertung läuft — der Korpus kann erst danach gewechselt werden."
+            )
             return
-        if self._load_corpus(root) >= 2:
-            self._on_run()
+        self._load_corpus(root)
 
-    def _load_corpus(self, root: Path) -> int:
-        """Scan a corpus directory, fill the table, and report the usable count."""
+    def _load_corpus(self, root: Path) -> None:
+        """Scan a corpus directory and fill the table."""
         self._corpus_root = root
         scanned = corpus.scan(root)
         self._directories = scanned.usable
@@ -294,7 +342,7 @@ class ExperimentWindow(QDialog):
 
         self._corpus_label.setText(corpus.describe(scanned))
         self._run_button.setEnabled(scanned.can_evaluate)
-        return len(self._directories)
+        self._set_deletion_enabled(True)
 
     # ── Run ──────────────────────────────────────────────────────────────
 
@@ -302,6 +350,7 @@ class ExperimentWindow(QDialog):
         self._run_button.setEnabled(False)
         self._choose_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
+        self._set_deletion_enabled(False)
         self._progress.setRange(0, 0)
         self._status.setText("Starte …")
         self._start_spinner()
@@ -363,6 +412,76 @@ class ExperimentWindow(QDialog):
         self._run_button.setEnabled(len(self._directories) >= 2)
         self._choose_button.setEnabled(True)
         self._cancel_button.setEnabled(False)
+        self._set_deletion_enabled(self._corpus_root is not None)
+
+    def _is_running(self) -> bool:
+        return self._thread is not None and self._thread.isRunning()
+
+    # ── Generated files ──────────────────────────────────────────────────
+
+    def _set_deletion_enabled(self, enabled: bool) -> None:
+        """Deleting needs a loaded corpus and no run that could be writing to it."""
+        self._delete_button.setEnabled(enabled)
+        for action in self._deletion_actions:
+            action.setEnabled(enabled)
+
+    def _delete_artifacts(self, kinds: frozenset[artifacts.ArtifactKind]) -> None:
+        """
+        Delete the loaded corpus' generated files of the given kinds, after asking.
+
+        Recordings, event logs and ground truth are never touched (see
+        `artifacts.delete`). The corpus is rescanned afterwards, so the cache
+        columns of the table show what is left.
+        """
+        root = self._corpus_root
+        if root is None or self._is_running():
+            return
+        paths = artifacts.find(root, kinds)
+        if not paths:
+            QMessageBox.information(
+                self, _DELETION_TITLE, "Im Korpus gibt es keine generierten Dateien dieser Art."
+            )
+            return
+        if not self._confirm_deletion(root, paths, kinds):
+            return
+        result = artifacts.delete(paths)
+        self._load_corpus(root)
+        self._report_deletion(result)
+
+    def _confirm_deletion(
+        self, root: Path, paths: list[Path], kinds: frozenset[artifacts.ArtifactKind]
+    ) -> bool:
+        """Ask before deleting; the full file list is one click away in the details."""
+        sessions = len({path.parent for path in paths})
+        text = (
+            f"{len(paths)} Dateien ({format_bytes(artifacts.total_size(paths))}) "
+            f"in {sessions} Session(s) löschen?\n\n"
+            "Aufnahme, events.json und Ground Truth bleiben unverändert. Gelöschte "
+            "Dateien werden beim nächsten Öffnen oder Auswerten neu erzeugt."
+        )
+        if artifacts.ArtifactKind.MODEL_CACHES in kinds:
+            text += "\nGelöschte Claude-Caches lösen dabei neue, kostenpflichtige Modellaufrufe aus."
+
+        box = QMessageBox(
+            QMessageBox.Icon.Warning,
+            _DELETION_TITLE,
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            self,
+        )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        box.setDetailedText("\n".join(str(path.relative_to(root)) for path in paths))
+        return box.exec() == QMessageBox.StandardButton.Yes
+
+    def _report_deletion(self, result: artifacts.DeletionResult) -> None:
+        self._status.setText(f"{len(result.deleted)} generierte Dateien gelöscht.")
+        if result.failed:
+            QMessageBox.warning(
+                self,
+                _DELETION_TITLE,
+                "Nicht alle Dateien konnten gelöscht werden:\n\n"
+                + "\n".join(f"{path}: {reason}" for path, reason in result.failed.items()),
+            )
 
     # ── Rendering ────────────────────────────────────────────────────────
 
@@ -428,7 +547,7 @@ class ExperimentWindow(QDialog):
         """Stop a running evaluation; cached model verdicts survive."""
         if self._worker is not None:
             self._worker.cancel()
-        if self._thread is not None and self._thread.isRunning():
+        if self._is_running():
             self._thread.quit()
             self._thread.wait(120_000)
         super().closeEvent(event)

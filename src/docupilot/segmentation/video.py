@@ -57,8 +57,11 @@ _MAX_CALLS = 400
 # also what the synchronisation report reads. It is a pure function of the
 # recording bytes and these two constants, so it is kept beside the recording
 # and read back instead of decoding every frame again.
-_ACTIVITY_FILE = "video_activity.npz"
+ACTIVITY_FILE = "video_activity.npz"
 _ACTIVITY_FORMAT = 1
+
+# What the VLM said about each frame pair, kept beside the recording.
+VERDICT_CACHE_FILE = "gui_vlm_cache.json"
 
 Region = tuple[float, float, float, float]
 
@@ -407,7 +410,7 @@ def scan_activity(session: RecordingSession, use_cache: bool = True) -> Activity
         and stores nothing.
     :raises RuntimeError: when the frame times cannot be read (see parse_frame_times).
     """
-    path = session.session_dir / _ACTIVITY_FILE
+    path = session.session_dir / ACTIVITY_FILE
     key = _ACTIVITY_KEY if use_cache else None
 
     if key is not None and path.exists():
@@ -501,7 +504,7 @@ def extract(
         return True
 
     cache = (
-        vlm.Cache(session.session_dir / "gui_vlm_cache.json") if use_cache else None
+        vlm.Cache(session.session_dir / VERDICT_CACHE_FILE) if use_cache else None
     )
 
     def judge(anchor: int, current: int) -> Judgement | None:

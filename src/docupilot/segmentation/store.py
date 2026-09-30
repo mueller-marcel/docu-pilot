@@ -22,9 +22,14 @@ from docupilot.recording.session import RecordingSession
 from docupilot.segmentation.evidence import BoundaryEvidence
 
 
+def file_name(modality: str) -> str:
+    """The name of one modality's lane file inside a session directory."""
+    return f"{modality}_evidence.npz"
+
+
 def path_for(session: RecordingSession, modality: str) -> Path:
     """Where one modality's lane is kept — in the session, next to its inputs."""
-    return session.session_dir / f"{modality}_evidence.npz"
+    return session.session_dir / file_name(modality)
 
 
 def load(session: RecordingSession, modality: str) -> BoundaryEvidence | None:
