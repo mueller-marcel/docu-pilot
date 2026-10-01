@@ -11,7 +11,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -102,6 +102,8 @@ class Judgement:
     category: str
     p_boundary: float   # graded evidence in [0, 1]
     reason: str = ""
+    model: str = ""         # which model answered — empty for legacy cache entries
+    retrieved_at: str = ""  # when it answered (UTC, ISO)
 
 
 # The one boundary decision rule lives downstream (BOUNDARY_THRESHOLD on
@@ -182,17 +184,20 @@ class Cache(backend.JsonVerdictCache):
         raw = self._raw(key)
         if not isinstance(raw, list):
             return None
+        model, retrieved_at = self.provenance(key)
         try:
             return [Judgement(str(e["category"]), float(e["p_boundary"]),
-                              str(e.get("reason", ""))) for e in raw]
+                              str(e.get("reason", "")), model, retrieved_at) for e in raw]
         except (KeyError, TypeError, ValueError):
             return None
 
     def put(self, key: str, js: list[Judgement]) -> None:
+        model = js[0].model if js else ""
+        retrieved_at = js[0].retrieved_at if js else ""
         self._store(key, [
             {"category": j.category, "p_boundary": j.p_boundary, "reason": j.reason}
             for j in js
-        ])
+        ], model=model, retrieved_at=retrieved_at)
 
 
 def judge(sentences: list[str], cache: Cache | None = None,
@@ -210,6 +215,9 @@ def judge(sentences: list[str], cache: Cache | None = None,
             return hit
 
     result = parse(ask(sentences, model), len(sentences))
-    if result is not None and cache is not None:
-        cache.put(key, result)
+    if result is not None:
+        stamp = backend.now_utc()
+        result = [replace(j, model=model, retrieved_at=stamp) for j in result]
+        if cache is not None:
+            cache.put(key, result)
     return result

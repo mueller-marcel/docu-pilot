@@ -24,17 +24,21 @@ class ArtifactKind(Enum):
     """The groups generated files are deleted by."""
 
     LANES = auto()
-    """Finished evidence curves and the video activity scan (.npz)."""
+    """Drawn evidence curves and the video activity scan (.npz)."""
 
     MODEL_CACHES = auto()
-    """What the Claude models answered (.json); deleting these costs new model calls."""
+    """What the Claude models answered, per question and per recording (.json);
+    deleting these costs new model calls."""
 
 
 FILE_NAMES: Mapping[ArtifactKind, frozenset[str]] = {
     ArtifactKind.LANES: frozenset(
         {*(store.file_name(modality) for modality in MODALITIES), video.ACTIVITY_FILE}
     ),
-    ArtifactKind.MODEL_CACHES: frozenset({video.VERDICT_CACHE_FILE, audio.VERDICT_CACHE_FILE}),
+    ArtifactKind.MODEL_CACHES: frozenset({
+        video.VERDICT_CACHE_FILE, audio.VERDICT_CACHE_FILE,
+        *(store.raw_file_name(modality) for modality in (video.MODALITY, audio.MODALITY)),
+    }),
 }
 
 # The recorded inputs, taken from the session itself so a renamed file stays protected.

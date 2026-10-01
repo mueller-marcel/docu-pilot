@@ -1,49 +1,45 @@
 """
-The experiment itself: every modality subset scored on every session, with the
-model that predicts a session never having seen it.
+The experiment itself: every modality coalition scored on every session, with
+nothing that predicts a session — model, threshold, calibrated parameter —
+ever having seen that session's labels.
 
-Produces one tidy table per candidate-pool policy. Every later analysis —
-Shapley, saturation, significance — is derived from these tables, so the
-expensive part runs once per policy.
+One outer fold per session (leave-one-session-out):
+
+    1. calibrate REST_FULL_S, AUDIO_ANCHOR, PEAK_OFFSET_S on the training
+       sessions (C8)
+    2. draw every session's curves with those parameters
+    3. per coalition: choose the threshold by an inner GroupKFold, fit the
+       decider on all training sessions, predict the held-out one (C4)
+
+`run_fold` is the whole fold and never reads the held-out session's labels;
+scoring happens afterwards in `run`. Every later analysis — Shapley,
+saturation, statistics — is derived from the tidy table `run` produces.
 """
 
 from __future__ import annotations
 
 import csv
+import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any
 
 import numpy as np
 
-from docupilot.evaluation import fusion, metrics
+from docupilot.config import BOUNDARY_DEFINITIONS, TAU_SWEEP_S, FoldParams, Settings
+from docupilot.evaluation import calibration, dataset, fusion, metrics
 from docupilot.evaluation.analysis import subsets
-from docupilot.evaluation.dataset import duration_s, ground_truth_s
+from docupilot.evaluation.calibration import Calibration
 from docupilot.recording.session import RecordingSession
-from docupilot.segmentation import MODALITIES, BoundaryEvidence, segment
-
-# Tolerance the training labels are built with and the threshold is calibrated
-# at. Held fixed across the tolerance sweep so the sweep varies only how
-# predictions are *scored*, not what the model was taught — otherwise the two
-# effects could not be told apart.
-LABEL_TAU_S = 1.0
-
-TAUS_S: tuple[float, ...] = (0.25, 0.5, 1.0, 1.5, 2.0, 3.0)
+from docupilot.segmentation import MODALITIES, BoundaryEvidence, extract_raws, render
 
 # Rows are keyed by this label; the empty coalition has no modality to name.
 EMPTY_SUBSET_LABEL = "{}"
 
-# Where a coalition's candidates come from.
-#   "union": the pool is fixed to ALL players for every coalition, so the
-#            factorial design varies only the information available for
-#            scoring, never the search space — the ablation the research
-#            question's "Informationsbeitrag" asks for. The primary design.
-#   "own":   each coalition proposes its own candidates and sees nothing of
-#            the others — what "isoliert" (sub-question 1) literally means.
-#            The difference to "union" for a single modality is the credit
-#            that modality receives for the other modalities' TIMING alone.
-CandidatePool = Literal["union", "own"]
+# Settings that change a modality's RAW result; a variant differing in one of
+# them needs its own extraction (burst pause: free; the other two: model calls).
+RAW_SETTINGS: tuple[str, ...] = ("burst_pause_s", "activity_quiet", "asr_alignment")
 
 
 @dataclass(frozen=True)
@@ -51,88 +47,53 @@ class SessionData:
     """One recording with everything the experiment needs, extracted once."""
 
     name: str
-    gt_s: list[float]
     duration_s: float
-    evidence: dict[str, BoundaryEvidence]
+    raws: Mapping[str, Any]
+    annotations: Mapping[tuple[str, int], list[float]]
+    """(definition, run) -> boundaries in seconds, edge rules applied."""
+
+    def gt_s(self, definition: str = "begin", run: int = 1) -> list[float]:
+        return list(self.annotations.get((definition, run), []))
+
+    def has(self, definition: str, run: int = 1) -> bool:
+        return (definition, run) in self.annotations
 
 
 @dataclass(frozen=True)
-class _Prepared:
-    """One session's candidates, described by the given modalities, labelled once."""
+class FoldResult:
+    """One outer fold: what was calibrated, and what every coalition predicted."""
 
-    times: np.ndarray
-    features: np.ndarray      # (n_candidates, FEATURES_PER_MODALITY * n_modalities)
-    labels: np.ndarray
-    gt_s: list[float]
-
-
-def load(
-    directories: Sequence[Path],
-    use_cache: bool = True,
-    on_progress: Callable[[str, int, int], None] | None = None,
-    is_cancelled: Callable[[], bool] | None = None,
-    kind: str = "end",
-) -> list[SessionData]:
-    """
-    Run the segmentation once per session and keep the evidence in memory.
-
-    The costly model calls happen here — once per session and modality, not once
-    per subset. All 8 subsets reuse these curves, so the factorial design costs
-    three extractions per session rather than eight.
-
-    :param directories: session directories, each with recording.mp4 and
-        ground_truth.json.
-    :param use_cache: reuse the lanes and verdicts cached beside the recordings —
-        a session extracted once is loaded from its own directory afterwards.
-    :param on_progress: called as (session name, done, total).
-    :param is_cancelled: polled between and inside sessions; True stops early
-        and returns what was extracted so far.
-    :param kind: which boundary definition to load as ground truth — "end"
-        (the action's result has settled) or "start" (the next action's first
-        input); see RecordingSession.
-    :return: one entry per session, in the given order.
-    :raises RuntimeError: when a modality fails — an empty lane would silently
-        look like a modality that found nothing.
-    """
-    out: list[SessionData] = []
-    for i, directory in enumerate(directories, start=1):
-        if is_cancelled is not None and is_cancelled():
-            return out
-        session = RecordingSession.from_directory(directory)
-        evidence: dict[str, BoundaryEvidence] = {}
-        errors: dict[str, str] = {}
-        segment(
-            session,
-            on_result=evidence.__setitem__,
-            on_error=errors.__setitem__,
-            use_cache=use_cache,
-            is_cancelled=is_cancelled,
-        )
-        if is_cancelled is not None and is_cancelled():
-            return out
-        if errors:
-            raise RuntimeError(
-                f"{directory.name}: Modalität(en) fehlgeschlagen — "
-                + "; ".join(f"{m}: {msg.splitlines()[0]}" for m, msg in errors.items())
-            )
-        out.append(SessionData(
-            name=directory.name,
-            gt_s=ground_truth_s(session, kind),
-            duration_s=duration_s(session),
-            evidence=evidence,
-        ))
-        if on_progress is not None:
-            on_progress(directory.name, i, len(directories))
-    return out
+    held_out: str
+    calibration: Calibration
+    predictions: dict[str, list[float]]
+    thresholds: dict[str, float]
+    thresholds_oob: dict[str, float]
+    evidence: dict[str, BoundaryEvidence]
+    """The held-out session's curves as this fold drew them."""
 
 
-def with_ground_truth(data: Sequence[SessionData], gt_by_name: Mapping[str, list[float]]) -> list[SessionData]:
-    """The same corpus scored against another set of boundaries — the evidence
-    is untouched, only the reference changes."""
-    return [
-        SessionData(d.name, list(gt_by_name[d.name]), d.duration_s, d.evidence)
-        for d in data
-    ]
+@dataclass
+class ExperimentResult:
+    """The tidy table plus what the report needs beyond it."""
+
+    settings: Settings
+    rows: list[dict] = field(default_factory=list)
+    folds: list[FoldResult] = field(default_factory=list)
+
+    @property
+    def label(self) -> str:
+        return variant_label(self.settings)
+
+    def predictions(self, subset: str) -> dict[str, list[float]]:
+        """Per session, what one coalition predicted (label from subset_label)."""
+        return {f.held_out: f.predictions[subset] for f in self.folds}
+
+
+def variant_label(settings: Settings) -> str:
+    """A short name of a run's switches, for tables and CSV rows."""
+    return (f"{settings.decider}·{settings.candidate_pool}·{settings.boundary_definition}"
+            f"·ev={settings.event_channels}·pause={settings.burst_pause_s:g}"
+            f"·audio={settings.audio_peak_mode}·quiet={settings.activity_quiet:g}")
 
 
 def subset_label(subset: Sequence[str] | frozenset[str]) -> str:
@@ -145,147 +106,284 @@ def subset_from_label(label: str) -> frozenset[str]:
     return frozenset() if label == EMPTY_SUBSET_LABEL else frozenset(label.split("+"))
 
 
-def _prepare(
-    data: Sequence[SessionData], pool: Sequence[str], columns: Sequence[str]
-) -> list[_Prepared]:
-    """
-    Candidates from `pool`, features for `columns`, labels — per session.
+# ── Loading ───────────────────────────────────────────────────────────────────
 
-    :param pool: modalities whose score peaks become the candidates.
-    :param columns: modalities whose features describe them, block order.
+def load(
+    directories: Sequence[Path],
+    settings: Settings | None = None,
+    use_cache: bool = True,
+    on_progress: Callable[[str, int, int], None] | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> list[SessionData]:
     """
-    prepared = []
-    for session in data:
-        times = fusion.candidate_times(session.evidence, pool)
-        prepared.append(_Prepared(
-            times=times,
-            features=fusion.feature_matrix(times, session.evidence, columns),
-            labels=fusion.label_candidates(times, session.gt_s, LABEL_TAU_S),
-            gt_s=session.gt_s,
-        ))
-    return prepared
+    Extract every modality's raw result once per session and keep it in memory.
+
+    The costly model calls happen here — once per session and modality, not
+    per coalition, fold or calibrated parameter: all of those only redraw the
+    cached raw results.
+
+    :param on_progress: called as (session name, done, total).
+    :param is_cancelled: polled between and inside sessions; True stops early
+        and returns what was extracted so far.
+    :raises RuntimeError: when a modality fails — an empty lane would silently
+        look like a modality that found nothing.
+    """
+    settings = settings or Settings()
+    out: list[SessionData] = []
+    for i, directory in enumerate(directories, start=1):
+        if is_cancelled is not None and is_cancelled():
+            return out
+        session = RecordingSession.from_directory(directory)
+        raws: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        extract_raws(session, raws.__setitem__, errors.__setitem__, settings,
+                     is_cancelled=is_cancelled, use_cache=use_cache)
+        if is_cancelled is not None and is_cancelled():
+            return out
+        if errors:
+            raise RuntimeError(
+                f"{directory.name}: Modalität(en) fehlgeschlagen — "
+                + "; ".join(f"{m}: {msg.splitlines()[0]}" for m, msg in errors.items())
+            )
+        duration = dataset.duration_s(session)
+        annotations = {
+            (definition, run): dataset.ground_truth_s(session, definition, run, duration)
+            for definition in BOUNDARY_DEFINITIONS
+            for run in session.annotation_runs(definition)
+        }
+        out.append(SessionData(directory.name, duration, raws, annotations))
+        if on_progress is not None:
+            on_progress(directory.name, i, len(directories))
+    return out
 
 
-def _predict_held_out(
-    prepared: Sequence[_Prepared], column_index: Sequence[int], held_out: int
-) -> tuple[list[float], float]:
-    """
-    Leave-one-session-out: fit on every other session, calibrate the threshold
-    on those sessions' out-of-bag predictions, predict the held-out one.
+def needs_extraction(primary: Settings, variant: Settings) -> bool:
+    """True when a variant's raw results differ from the primary run's."""
+    return any(getattr(primary, n) != getattr(variant, n) for n in RAW_SETTINGS)
 
-    :param column_index: which feature columns the coalition may read.
-    :return: (predicted boundaries, threshold used).
+
+# ── One fold ──────────────────────────────────────────────────────────────────
+
+def _param_key(modality: str, params: FoldParams) -> tuple:
+    """The fold parameters a modality's curve actually depends on."""
+    if modality == "events":
+        return (params.rest_full_s,)
+    if modality == "audio":
+        return (params.audio_anchor, params.peak_offset_s)
+    return ()
+
+
+class FeatureCache:
     """
-    train = [p for i, p in enumerate(prepared) if i != held_out]
-    fuser = fusion.ForestFuser()
-    fuser.fit(
-        np.vstack([p.features[:, column_index] for p in train]),
-        np.concatenate([p.labels for p in train]),
+    Curves and feature blocks shared across folds. Most folds calibrate the
+    same parameters, and the video curve never depends on them, so a block is
+    computed once per (session, modality, parameters, candidates).
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._evidence: dict[tuple, BoundaryEvidence] = {}
+        self._blocks: dict[tuple, tuple[np.ndarray, list[str]]] = {}
+        self._grids: dict[str, np.ndarray] = {}
+
+    def evidence(self, session: SessionData, modality: str, params: FoldParams) -> BoundaryEvidence:
+        key = (session.name, modality, _param_key(modality, params))
+        if key not in self._evidence:
+            self._evidence[key] = render(modality, session.raws[modality], self._settings, params)
+        return self._evidence[key]
+
+    def grid(self, session: SessionData) -> np.ndarray:
+        if session.name not in self._grids:
+            self._grids[session.name] = fusion.grid_candidates(session.duration_s)
+        return self._grids[session.name]
+
+    def table(
+        self, session: SessionData, cand: np.ndarray, cand_key: tuple,
+        modalities: Sequence[str], params: FoldParams,
+    ) -> fusion.FeatureTable:
+        blocks = []
+        for m in modalities:
+            key = (session.name, m, _param_key(m, params), cand_key)
+            if key not in self._blocks:
+                self._blocks[key] = fusion.modality_features(self.evidence(session, m, params), cand)
+            blocks.append((m, *self._blocks[key]))
+        return fusion.FeatureTable.from_blocks(cand, blocks)
+
+
+def _candidates(
+    session: SessionData, coalition: Sequence[str], players: Sequence[str],
+    params: FoldParams, cache: FeatureCache, pool: str,
+) -> fusion.FeatureTable:
+    """The candidates of one session under a pool, described by the coalition only."""
+    if pool == "grid":
+        return cache.table(session, cache.grid(session), ("grid",), coalition, params)
+    source = players if pool == "union" else coalition
+    evidence = {m: cache.evidence(session, m, params) for m in source}
+    cand = fusion.candidate_times(evidence, source)
+    key = (pool, tuple(sorted(source)), tuple(_param_key(m, params) for m in sorted(source)))
+    return cache.table(session, cand, key, coalition, params)
+
+
+def run_fold(
+    data: Sequence[SessionData],
+    held_out: int,
+    settings: Settings,
+    players: Sequence[str] = MODALITIES,
+    cache: FeatureCache | None = None,
+) -> FoldResult:
+    """
+    One outer fold. Reads the labels of the training sessions only — the
+    held-out session contributes its recording, never its annotation.
+    """
+    cache = cache or FeatureCache(settings)
+    definition = settings.boundary_definition
+    tau = settings.tau_primary_s
+    train = [d for i, d in enumerate(data) if i != held_out]
+    test = data[held_out]
+    gts = [d.gt_s(definition) for d in train]
+
+    cal = calibration.calibrate(
+        [d.raws["audio"] for d in train], [d.raws["events"] for d in train],
+        gts, [d.duration_s for d in train], settings,
     )
+    params = cal.params
+    baseline = fusion.EmptyBaseline.fit([d.duration_s for d in train], [len(g) for g in gts])
+    test_evidence = {m: cache.evidence(test, m, params) for m in players}
 
-    # The OOB probabilities come back as one vector over the stacked training
-    # rows; cut it back into sessions so the threshold is chosen on the same
-    # per-session F1 the experiment attributes.
-    oob = fuser.oob_proba()
-    folds, offset = [], 0
-    for p in train:
-        folds.append((p.times, oob[offset:offset + len(p.times)], p.gt_s))
-        offset += len(p.times)
-    threshold = fusion.choose_threshold(folds, LABEL_TAU_S)
+    pool = settings.candidate_pool
+    kind = settings.decider
 
-    test = prepared[held_out]
-    scores = fuser.predict_proba(test.features[:, column_index])
-    return fusion.decide(test.times, scores, threshold), threshold
+    def post(times: np.ndarray, proba: np.ndarray, threshold: float) -> list[float]:
+        return fusion.decide(times, proba, threshold, settings.nms_s, peaks=pool == "grid")
+
+    predictions: dict[str, list[float]] = {}
+    thresholds: dict[str, float] = {}
+    thresholds_oob: dict[str, float] = {}
+    for coalition in subsets(players):
+        members = tuple(sorted(coalition))
+        label = subset_label(members)
+        threshold = threshold_oob = math.nan
+        if not members:
+            predicted = baseline.predict(test.duration_s)
+        elif kind == "rule":
+            predicted = fusion.RuleFuser().predict(test_evidence, members, test.duration_s, baseline)
+        else:
+            prepared = []
+            for d, gt in zip(train, gts):
+                table = _candidates(d, members, players, params, cache, pool)
+                prepared.append(fusion.Prepared(
+                    table.times, table.select(members),
+                    fusion.label_candidates(table.times, gt, settings.label_tol_s), gt,
+                ))
+            test_table = _candidates(test, members, players, params, cache, pool)
+
+            threshold = fusion.choose_threshold(
+                prepared,
+                lambda: fusion.Fuser(kind, n_estimators=fusion.trees_inner(kind),
+                                     seed=settings.seed),
+                post, tau,
+            )
+            final = fusion.Fuser(kind, seed=settings.seed, oob=kind == "forest").fit(
+                np.vstack([p.features for p in prepared]),
+                np.concatenate([p.labels for p in prepared]),
+            )
+            if final.oob_proba is not None:
+                threshold_oob = fusion.oob_threshold(prepared, final.oob_proba, post, tau)
+            proba = final.predict_proba(test_table.select(members))
+            predicted = post(test_table.times, proba, threshold)
+        predictions[label] = predicted
+        thresholds[label] = threshold
+        thresholds_oob[label] = threshold_oob
+
+    return FoldResult(test.name, cal, predictions, thresholds, thresholds_oob, test_evidence)
+
+
+# ── The whole experiment ──────────────────────────────────────────────────────
+
+def usable(data: Sequence[SessionData], definition: str) -> list[SessionData]:
+    """The sessions annotated under a definition (run 1)."""
+    return [d for d in data if d.has(definition)]
 
 
 def run(
     data: Sequence[SessionData],
+    settings: Settings | None = None,
     players: Sequence[str] = MODALITIES,
-    taus_s: Sequence[float] = TAUS_S,
-    pool: CandidatePool = "union",
+    taus_s: Sequence[float] = TAU_SWEEP_S,
     on_progress: Callable[[str, int, int], None] | None = None,
-    extra: Mapping[str, object] | None = None,
-) -> list[dict]:
+    is_cancelled: Callable[[], bool] | None = None,
+) -> ExperimentResult:
     """
-    Score every subset on every session, leaving that session out of training.
+    Score every coalition on every session, leaving that session out.
 
-    The empty coalition predicts nothing under either policy: with no feature
-    columns there is no basis on which any candidate could be accepted, so
-    v(∅) = 0.
-
-    :param data: the corpus; at least two sessions (leave-one-session-out).
-    :param players: the modalities the factorial design runs over.
+    :param data: the corpus; at least two sessions annotated under the
+        settings' boundary definition.
     :param taus_s: tolerances every prediction is scored at.
-    :param pool: candidate-pool policy, see `CandidatePool`.
-    :param on_progress: called as (subset label, done, total).
-    :param extra: columns added to every row, e.g. the boundary definition.
-    :return: one row per (session, subset, tolerance).
-    :raises ValueError: when fewer than two sessions are given.
+    :param on_progress: called as (held-out session, done, total).
+    :return: one row per (session, coalition, tolerance), plus the folds.
+    :raises ValueError: when fewer than two sessions carry the definition.
     """
+    settings = settings or Settings()
+    definition = settings.boundary_definition
+    data = usable(data, definition)
     if len(data) < 2:
         raise ValueError(
-            "Leave-one-session-out braucht mindestens zwei Sessions — mit einer "
-            "gäbe es keine Trainingsdaten, die die bewertete Session nicht "
-            "enthalten."
+            "Leave-one-session-out braucht mindestens zwei Sessions mit Grenzen der "
+            f"Definition {definition!r} — mit einer gäbe es keine Trainingsdaten, die "
+            "die bewertete Session nicht enthalten."
         )
 
-    all_columns = sorted(players)
-    union = _prepare(data, all_columns, all_columns) if pool == "union" else None
-    all_subsets = subsets(players)
-    rows: list[dict] = []
-
-    for index, coalition in enumerate(all_subsets, start=1):
-        subset = tuple(sorted(coalition))
-        label = subset_label(subset)
-
-        if not subset:
-            prepared, column_index = None, []
-        elif pool == "union":
-            prepared = union
-            column_index = [
-                c for m in subset for c in fusion.block_columns(all_columns.index(m))
-            ]
-        else:
-            prepared = _prepare(data, subset, subset)
-            column_index = list(range(fusion.FEATURES_PER_MODALITY * len(subset)))
-
-        for held_out, session in enumerate(data):
-            if prepared is None:
-                predicted, threshold = [], float("nan")
-            else:
-                predicted, threshold = _predict_held_out(prepared, column_index, held_out)
+    result = ExperimentResult(settings)
+    cache = FeatureCache(settings)
+    for index, test in enumerate(data):
+        if is_cancelled is not None and is_cancelled():
+            break
+        fold = run_fold(data, index, settings, players, cache)
+        result.folds.append(fold)
+        video = test.raws.get("video")
+        audio_cal = fold.calibration.audio
+        for label, predicted in fold.predictions.items():
             for tau in taus_s:
-                m = metrics.match(session.gt_s, predicted, tau)
-                rows.append({
-                    "session": session.name,
-                    "pool": pool,
+                m = metrics.match(test.gt_s(definition), predicted, tau)
+                result.rows.append({
+                    "session": test.name,
+                    "variant": result.label,
+                    "decider": settings.decider,
+                    "pool": settings.candidate_pool,
+                    "definition": definition,
+                    "event_channels": settings.event_channels,
                     "subset": label,
-                    "n_modalities": len(subset),
+                    "n_modalities": len(subset_from_label(label)),
                     "tau_s": tau,
-                    "threshold": threshold,
+                    "threshold": fold.thresholds[label],
+                    "threshold_oob": fold.thresholds_oob[label],
+                    "rest_full_s": fold.calibration.params.rest_full_s,
+                    "audio_anchor": fold.calibration.params.audio_anchor,
+                    "peak_offset_s": fold.calibration.params.peak_offset_s,
+                    "audio_pairs": audio_cal.n_pairs,
+                    "audio_match_rate": audio_cal.match_rate,
+                    "audio_fallback": audio_cal.fallback,
+                    "video_calls": getattr(video, "calls", 0),
+                    "video_limit_hit": getattr(video, "limit_hit", False),
                     "n_predicted": len(predicted),
                     "tp": m.tp, "fp": m.fp, "fn": m.fn,
                     "precision": m.precision,
                     "recall": m.recall,
                     "f1": m.f1,
-                    **(dict(extra) if extra else {}),
                 })
-
         if on_progress is not None:
-            on_progress(label, index, len(all_subsets))
+            on_progress(test.name, index + 1, len(data))
+    return result
 
-    return rows
 
+# ── Reading the table ─────────────────────────────────────────────────────────
 
 def subset_values(
     rows: Sequence[dict], tau_s: float, metric: str = "f1"
 ) -> dict[frozenset[str], float]:
     """
-    Macro-averaged metric per subset — the characteristic function the Shapley
-    values are computed from.
-
-    Macro because sessions are the unit of the experiment: each counts once,
-    regardless of length.
+    Macro-averaged metric per coalition — the characteristic function v(S).
+    Macro because sessions are the unit of the experiment.
     """
     per_subset: dict[frozenset[str], list[float]] = {}
     for row in rows:
@@ -298,14 +396,7 @@ def subset_values(
 def paired_metric(
     rows: Sequence[dict], tau_s: float, metric: str = "f1"
 ) -> dict[frozenset[str], dict[str, float]]:
-    """
-    Per-session value of one metric per subset — what the paired statistics need.
-
-    The mean alone cannot answer whether a difference is real; that question is
-    asked of the per-session values.
-
-    :param metric: which column to pull, e.g. "f1", "recall", "precision".
-    """
+    """Per-session value of one metric per coalition — what the statistics need."""
     out: dict[frozenset[str], dict[str, float]] = {}
     for row in rows:
         if row["tau_s"] != tau_s:

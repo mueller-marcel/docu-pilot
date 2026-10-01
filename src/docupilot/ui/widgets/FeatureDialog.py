@@ -23,14 +23,14 @@ _GROUND_TRUTH_COLOR = "#059669"
 # modality names; everything in the value is a UI decision and lives only here.
 _LANES: dict[str, dict[str, str]] = {
     "events": {
-        "section": "  ►  Events (Leerlauf + Wechsel der Eingabeart)",
-        "label":   "Event-Score  ·  Klick / Taste / Scroll",
+        "section": "  ►  Events (Ruhe davor · Abschluss-Taste · Klassenwechsel, am Burst-Beginn)",
+        "label":   "Event-Score  ·  gewichtetes Maximum der drei Teilkurven",
         "name":    "Events",
         "color":   FeatureTimelineWidget.EVENT_COLOR,
     },
     "audio": {
-        "section": "  ►  Audio (Ansage-Fenster, LLM-bewertet)",
-        "label":   "Audio-Score  ·  Grenze im Fenster erwartet",
+        "section": "  ►  Audio (Ansagen, LLM-bewertet; Peak = Anker + Versatz)",
+        "label":   "Audio-Score  ·  Beginn des angesagten Schritts erwartet",
         "name":    "Audio",
         "color":   "#a78bfa",
     },
@@ -124,7 +124,8 @@ class FeatureDialog(QDialog):
         # has probed the file; _sync_cursor corrects that.
         self._duration_ms = float(player.duration()) or duration_ms
 
-        self._ground_truth_markers = session.ground_truth_markers()
+        # The primary annotation: definition "begin", run 1.
+        self._ground_truth_markers = session.ground_truth_markers("begin", 1)
         self._boundaries_ms = [t_ms for t_ms, _ in self._ground_truth_markers]
 
         self._canvases: list[FeatureTimelineWidget] = []

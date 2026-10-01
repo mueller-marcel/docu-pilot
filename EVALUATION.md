@@ -1,7 +1,8 @@
 # Evaluationsplan
 
 Wie aus der implementierten Segmentierung die drei Teilfragen der Masterarbeit
-beantwortet werden.
+beantwortet werden. Stand: Änderungsspezifikation v2 (30.09.2026). Ergebnisse,
+die vor diesem Stand erzeugt wurden, gelten nur noch als **Pilot**.
 
 **Forschungsfrage:** Wie verändert sich die Qualität der automatisierten
 Segmentierung in Abhängigkeit von Art, Anzahl und Kombination der Modalitäten —
@@ -10,237 +11,154 @@ mehr?
 
 | | Teilfrage | beantwortet durch |
 |---|---|---|
-| **TF1** | Welche Modalität leistet isoliert am meisten? | Tabelle der 8 Kombinationen |
+| **TF1** | Welche Modalität leistet isoliert am meisten? | Tabelle der 8 Koalitionen |
 | **TF2** | Welchen marginalen Beitrag leistet jede Modalität? | Shapley-Werte |
-| **TF3** | Ab wann tritt Sättigung / Redundanz ein? | Sättigungskurve, Interaktionsindex |
+| **TF3** | Ab wann tritt Sättigung / Redundanz ein? | Schritte Δ(k), k*, Interaktionsindex |
 
 Datensatz: **25 selbst aufgenommene und annotierte Sessions**, ein Annotator.
+Es gibt **keine Entwicklungssession** außerhalb des Korpus.
 
 ---
 
-## Die fünf Schichten
+## Grenzdefinition
 
-```
-5. Ist der Unterschied Zufall?        <- Statistik            (später)
-4. Wer hat wie viel beigetragen?      <- Shapley              Schritt 4
-3. Wie gut war eine Vorhersage?       <- F1 mit Toleranz      Schritt 1
-2. Wie entsteht eine Vorhersage?      <- Random Forest        Schritt 2+3
-1. Was liefern die Modalitäten?       <- fertig (segmentation/)
-```
+Grenze = **Beginn der ersten beobachtbaren Handlung des neuen Schritts**
+(Annotationsleitfaden). Alle drei Extraktoren setzen ihre Evidenz dorthin
+(`Settings.boundary_definition = "begin"`); „Ende“ (Ergebnis sichtbar und
+dauerhaft) bleibt nur als Sensitivitätsvariante und wird nur gegen eine
+„Ende“-Annotation ausgewertet.
 
-Schicht 1 ist implementiert: `video.py`, `audio.py`, `events.py` liefern je ein
-`BoundaryEvidence(times_s, score, boundaries_s)`. Die Module importieren einander
-nicht — diese Unabhängigkeit ist die Voraussetzung dafür, dass die Ablation
-überhaupt gültig ist.
-
-Schichten 2–4 sind die vier Bauschritte unten. Schicht 5 folgt danach.
-
----
-
-## Schritt 1 — F1 mit Toleranz
-
-**Ziel:** Aus einer Liste vorhergesagter Grenzen und der Ground Truth eine Zahl
-machen.
-
-Eine Vorhersage zählt als Treffer, wenn sie innerhalb der Toleranz `tau` an einer
-GT-Grenze liegt:
-
-```
-Ground Truth:   10,0s        25,0s        40,0s
-Vorhersage:     10,3s        24,8s                    55,0s
-                 TP           TP           FN         FP
-
-Precision = TP/(TP+FP) = 2/3 = 0,67
-Recall    = TP/(TP+FN) = 2/3 = 0,67
-F1                            = 0,67
-```
-
-**Das Matching muss 1:1 sein.** Ohne diese Bedingung könnte eine einzelne
-Vorhersage mehrere GT-Grenzen bedienen und den Recall künstlich aufblähen.
-Verfahren: optimales bipartites Matching (Hungarian) über die Paare mit
-`|t_pred - t_gt| <= tau`.
-
-**Toleranz:** `tau = 1,0 s` als Primärwert, zusätzlich ein Sweep über
-0,25 s bis 3,0 s als Robustheitsnachweis.
-
-**Verifikation des Messinstruments** (Unit-Tests, bevor irgendein Ergebnis
-entsteht):
-
-| Prüfung | Erwartung |
-|---|---|
-| Vorhersage identisch zur GT | F1 = 1,0 |
-| Leere Vorhersage | F1 = 0,0 |
-| Eine Vorhersage, zwei GT innerhalb tau | genau 1 TP, 1 FN |
-| Vorhersage um tau + epsilon verschoben | TP wird zu FN |
-
-**Nullmodell:** Ein Zufallsgenerator, der Grenzen mit derselben Rate wie die GT
-setzt, liefert das Zufallsniveau. Ohne diesen Referenzwert ist ein F1 von 0,65
-nicht interpretierbar.
-
-**Ergebnis:** `metrics.py`
-
----
-
-## Methodische Schärfung (06.09.2026)
-
-Die folgenden Festlegungen ersetzen die entsprechenden Absätze weiter unten;
-der Code in `evaluation/` ist die Referenz.
-
-| Punkt | Vorher | Jetzt | Warum |
-|---|---|---|---|
-| Kandidatenpool | nur Union, fixiert | **Union (primär)** und **isoliert je Teilmenge** (`experiment.run(pool=...)`) | TF1 fragt nach der *isolierten* Qualität. Die Differenz v_union({m}) − v_isoliert({m}) ist der **Zeitpunkt-Kredit**, den eine Modalität nur durch die Kandidaten der anderen erhält. |
-| Merkmale je Modalität | 1 Zahl (Max ±1 s) | Punktwert, Max ±0,5/1/2 s, Sessionrang (`fusion.FEATURE_NAMES`) | Der Entscheider kann scharfe Peaks (Video) von breiten Fenstern (Audio) unterscheiden. Identisches Rezept für alle Modalitäten, damit die Shapley-Werte nicht am Aufwand hängen. |
-| Schwelle | fest 0,5 | je Fold auf **Out-of-Bag**-Vorhersagen der Trainingssessions kalibriert (`fusion.choose_threshold`) | Balanced-Gewichtung macht 0,5 nicht F1-optimal; OOB ist leakage-frei und kostet keinen zusätzlichen Fit. |
-| Kopplung | Deckung, Rate, Median-Versatz | zusätzlich **Zufallsdeckung**, **Lift**, **Feinausrichtung (±τ/4)**, **Versatz-IQR**, **Recall-Obergrenze** der Vereinigung, **Entscheidungs-/Vorschlagsverlust** (`coupling.CouplingStats`) | Deckung allein trennt „informativ“ nicht von „definitorisch gekoppelt“; die Feinausrichtung tut es. |
-| Robustheit | nur τ = 1 s | Shapley-Werte für jedes τ des Sweeps und nach Recall statt F1 | Eine Rangfolge, die bei jedem τ hält, ist eine Eigenschaft der Modalitäten, nicht der Bewertung. |
-| Multiplizität | unadjustiert, aber „signifikant“ genannt | je Familie (Shapley, Interaktion, Sättigung) zusätzlich Bonferroni-adjustierte Intervalle | Offenlegung, welche Aussagen als eine von drei bestehen. |
-| Grenzdefinition | nur „Ende“ | zweite Annotation „Beginn“ (Exposé) im Annotationsfenster; Sensitivitätslauf, sobald alle Sessions sie tragen | Prüft, ob der Beitrag an der Definition hängt. |
-
-Der PDF-Bericht (`ui/ReportPdfWriter.py`) und das Fenster zeigen dieselben
-Abschnitte aus `report.sections()`.
-
-## Schritt 2 — Kandidaten und Merkmale
-
-**Ziel:** Für eine Modalitätskombination S die Zeitpunkte bestimmen, über die
-überhaupt entschieden wird, und sie beschreiben.
-
-**Kandidaten:** die Vereinigung der Vorschläge aller Modalitäten in S.
-
-> Nur Modalitäten aus S. Zöge die Kombination `{audio}` Kandidaten aus dem Video,
-> würde Video-Information gemessen und Audio zugeschrieben — genau der Confound,
-> den die Modultrennung verhindern soll.
-
-Nebeneffekt: die leere Menge erzeugt keine Kandidaten, also keine Vorhersage,
-also `v({}) = 0`. Das macht die Shapley-Zerlegung sauber.
-
-**Merkmale je Kandidat:** die Score-Werte der beteiligten Modalitäten an diesem
-Zeitpunkt.
-
-| Kandidat | video_score | events_score | Label |
-|---|---|---|---|
-| 10,3s | 0,82 | 0,71 | Grenze |
-| 24,8s | 0,76 | 0,68 | Grenze |
-| 55,0s | 0,54 | 0,12 | keine Grenze |
-
-**Label:** aus der Ground Truth — liegt eine echte Grenze innerhalb `tau`?
-
-**Warum kandidatenbasiert und nicht pro Zeitraster?** Bei 50 Hz und rund
-10 Grenzen je Session läge das Klassenverhältnis bei etwa 1:10.000. Kandidaten
-reduzieren das auf ein trainierbares Maß.
-
-**Ergebnis:** `dataset.py`, `fusion.py` (Kandidatenteil)
-
----
-
-## Schritt 3 — Random Forest je Kombination
-
-**Ziel:** Pro Kombination ein Modell, das je Kandidat entscheidet: echte Grenze
-oder nicht.
-
-Sieben Modelle (die leere Menge braucht keines). Jedes sieht ausschliesslich die
-Merkmalsspalten seiner eigenen Modalitäten.
-
-**Leave-One-Session-Out:** Das Modell, das Session *i* vorhersagt, darf Session
-*i* nie im Training gesehen haben. 25 Durchläufe je Kombination, jeweils 24
-Sessions zum Trainieren, 1 zum Testen. Auch die Entscheidungsschwelle wird nur
-auf den Trainingsfolds bestimmt — sonst leakt die Testsession über die Schwelle
-ein.
-
-**Gegenprobe ohne Training:** dieselbe Auswertung mit einer einfachen Regel
-(Maximum der beteiligten Scores, Schwelle 0,5). Ergibt sie in Schritt 4 dieselbe
-Rangfolge, hängt das Ergebnis nicht an der Wahl des Modells.
-
-**Ergebnis:** eine Tabelle mit einer Zeile je (Session x Kombination x tau):
-`session_id, subset, tau, tp, fp, fn, precision, recall, f1`
-
-Daraus lässt sich jede weitere Auswertung ableiten. Export als CSV.
-
-> **Kosten:** Die teuren VLM/LLM-Aufrufe entstehen einmal je Session und
-> Modalität, nicht je Kombination. Alle 8 Kombinationen verwenden dieselben
-> zwischengespeicherten Evidenzkurven. Das 2^3-Design kostet 3 Extraktionen pro
-> Session, nicht 8.
-
-**Ergebnis:** `fusion.py`, `experiment.py`
-
----
-
-## Schritt 4 — Shapley
-
-**Ziel:** Die Gesamtleistung auf die drei Modalitäten aufteilen.
-
-Bei drei Modalitäten gibt es 3! = 6 Reihenfolgen. Der Shapley-Wert einer
-Modalität ist der mittlere Zuwachs, den sie beisteuert, gemittelt über alle
-Reihenfolgen ihres Hinzukommens.
-
-Beispiel für Video, bei angenommenen Werten:
-
-| Reihenfolge | Video kommt | Zuwachs |
+| Modalität | Urteil (unverändert) | Zeitpunkt der Evidenz |
 |---|---|---|
-| V,A,E | zuerst | 0,65 - 0,00 = 0,65 |
-| V,E,A | zuerst | 0,65 - 0,00 = 0,65 |
-| A,V,E | nach Audio | 0,73 - 0,30 = 0,43 |
-| E,V,A | nach Events | 0,75 - 0,50 = 0,25 |
-| A,E,V | zuletzt | 0,80 - 0,55 = 0,25 |
-| E,A,V | zuletzt | 0,80 - 0,55 = 0,25 |
+| Ereignisse | – | erstes Ereignis eines Bursts; Teilkurven Ruhe davor, Abschluss-Taste im vorigen Burst, Klassenwechsel |
+| Video | VLM: eingerasteter Zustand gegen den Anchor | erstes Frame nach dem Dwell mit Aktivität ≥ ACTIVITY_QUIET; letzter Dwell ohne Folgeaktivität: keine Evidenz |
+| Audio | LLM: kündigt der Satz eine Operation an? | Peak = Anker (Satzbeginn/-ende) + Versatz d mit Vorzeichen, begrenzt auf [t_i − 2 s, t_i + 0,9·Fenster] |
 
-`phi_video = Mittelwert = 0,41`
-
-**Exakt, nicht approximiert.** Bei drei Spielern werden alle 8 Koalitionen
-vollständig ausgewertet — es gibt keinen Monte-Carlo-Fehler zu rechtfertigen,
-anders als in weiten Teilen der Shapley-Literatur.
-
-**Summenprobe:** `phi_video + phi_audio + phi_events = v({alle drei})`. Das ist
-eine mathematische Identität (Effizienzeigenschaft). Geht sie nicht auf, liegt
-ein Implementierungsfehler vor — das Ergebnis prüft sich selbst.
-
-**Theoretische Begründung:** Der Shapley-Wert ist die eindeutige Zuordnung, die
-die Axiome Effizienz, Symmetrie, Dummy und Additivität erfüllt (Shapley 1953).
-Die Wahl ist damit nicht Geschmack, sondern unter benannten Anforderungen
-alternativlos.
-
-**Für TF3 zusätzlich:**
-
-- **Sättigungskurve:** mittlerer F1 je Anzahl beteiligter Modalitäten
-  (k = 0,1,2,3) und der Zuwachs von Stufe zu Stufe.
-- **Interaktionsindex** (Grabisch & Roubens 1999): `I(i,j) > 0` bedeutet
-  Synergie, `I(i,j) < 0` bedeutet Redundanz. Beantwortet die Redundanzfrage
-  direkt und unabhängig vom Signifikanztest.
-
-**Ergebnis:** `analysis.py`
+Randregeln des Leitfadens werden einmal zentral angewandt (`dataset.py`):
+Grenzen in den ersten/letzten 0,3 s entfallen, Grenzen mit < 0,1 s Abstand
+werden zusammengeführt.
 
 ---
 
-## Nach Schritt 4: Schicht 5
+## Schicht 1 — Extraktion (`segmentation/`)
 
-Nach den vier Schritten liegt ein vollständiges Ergebnis vor. Was dann folgt,
-beantwortet ausschliesslich die Frage: *Ist der gemessene Unterschied echt oder
-Zufall der 25 gewählten Sessions?*
+Jede Modalität hat zwei Stufen:
 
-Dafür werden die F1-Werte **je Session** benötigt (nicht nur die Mittelwerte):
+- `extract_raw` — Dekodieren und Modellaufrufe, gecacht (`<modalität>_raw.json`,
+  `video_activity.npz`, Urteilscaches). Unabhängig von Definition und
+  Fold-Parametern.
+- `render` — die Kurve, billig. Hängt von Definition, Peak-Modus und den in-fold
+  kalibrierten Parametern ab.
 
-| Session | {V,E} | {V,A,E} | Differenz |
-|---|---|---|---|
-| 1 | 0,71 | 0,79 | +0,08 |
-| 2 | 0,80 | 0,80 | 0,00 |
-| 3 | 0,62 | 0,74 | +0,12 |
+Eine Parameteränderung löst daher nie einen Modellaufruf aus. Jeder
+Cache-Eintrag trägt Modell-ID und Abrufdatum.
 
-Sind die Differenzen überwiegend gleichgerichtet, liegt ein echter Effekt vor.
+## Schicht 2 — Kandidaten, Merkmale, Entscheidung (`fusion.py`)
 
-| Baustein | Zweck | Status |
+**Kandidaten:** ein neutrales **5-Hz-Raster** über die Aufnahme, für alle 8
+Koalitionen einer Session bitgleich. Schon *wo* geprüft wird, ist Information;
+das Raster trägt keine. „own“ und „union“ (Peaks der eigenen bzw. aller Kurven)
+bleiben als Sensitivität.
+
+**Merkmale je Kurve** (Ereignisse: je Teilkurve): Punktwert (lineare
+Interpolation), Maximum in ±0,5/1/2 s, Sessionrang des ±1-s-Maximums. Eine
+Koalition sieht nur Spalten ihrer eigenen Modalitäten.
+
+**Label:** positiv, wenn eine Referenzgrenze in ±1 s liegt. Bei 5 Hz sind je
+Grenze etwa 11 Rasterpunkte positiv — Klassenverhältnis **≈ 1 : 15**
+(`class_weight="balanced"`).
+
+**Entscheidung:** p ≥ Schwelle → lokale Maxima von p entlang der Zeit → NMS 1 s.
+Identisch bei Schwellenwahl und Testvorhersage.
+
+**Entscheider:** Random Forest (primär), logistische Regression, und die
+untrainierte Regel **A0** (Maximum der Score-Kurven, Peaks ≥ 0,5, Abstand ≥ 1 s).
+
+**Leere Koalition:** `v(∅)` ist die informationslose Baseline — Grenzen im
+festen Abstand der mittleren Segmentlänge der Trainingssessions. Das
+Zufallsniveau (gleichverteilte Grenzen) bleibt als zweite Referenz im Bericht.
+
+## Schicht 3 — Leave-One-Session-Out (`experiment.py`)
+
+Je äußerem Fold, ausschließlich auf den 24 Trainingssessions:
+
+1. **Kalibrieren** (`calibration.py`): REST_FULL_S ∈ {4, 6, 8, 10, 12} s über A0
+   auf {Ereignisse}; AUDIO_ANCHOR und PEAK_OFFSET_S aus den Abständen
+   Referenzgrenze − Anker der OPERATION-Sätze (< 10 Paare → Satzbeginn, d = 0).
+   Zuordnungsquote und Abstandshistogramm gehen in den Bericht.
+2. **Rendern** aller Kurven mit diesen Parametern.
+3. Je Koalition **Schwelle über eine innere GroupKFold** (5 Folds) wählen,
+   Endmodell auf allen Trainingssessions fitten, Testsession vorhersagen. Die
+   OOB-Schwelle wird nur als Vergleichsspalte geloggt.
+
+Das Ergebnis-CSV hat eine Zeile je (Session × Koalition × τ) mit Schwelle,
+OOB-Schwelle und den kalibrierten Parametern des Folds.
+
+## Schicht 4 — Attribution (`analysis.py`)
+
+Exakte Shapley-Werte über 8 Koalitionen, Interaktionsindex (Grabisch & Roubens
+1999), Sättigungskurve. Selbsttest: Σφ = v(N) − v(∅).
+
+## Schicht 5 — Statistik (`statistics.py`)
+
+Shapley-Werte, Interaktionen und Schritte Δ(k) sind linear in den v(S) und
+werden **je Session** berechnet. Je Größe: Mittel, sd, t-Intervall — **naiv**
+und **korrigiert nach Nadeau & Bengio (2003)** (Faktor 1/n + 1/(n−1) statt 1/n;
+bei n = 25 ≈ 1,43-fach breiter). Beide werden immer berichtet.
+
+| Klasse | Bedingung | Bedeutung |
 |---|---|---|
-| BCa-Bootstrap über Sessions | Konfidenzintervall statt Punktschätzer | fertig |
-| Sensitivitäts-Poweranalyse (MDE) | Welche Effektgrösse kann n = 25 zeigen? | fertig |
-| erforderliche Fallzahl | quantifiziert, was der Korpus *nicht* kann | fertig |
-| Intrarater-Reliabilität | Messlatte und Herleitung der Relevanzschwelle | offen |
+| Ä | CI vollständig in [−SESOI, +SESOI] | nachweislich vernachlässigbar |
+| R | CI schließt 0 aus und \|Schätzer\| ≥ SESOI | statistisch und praktisch relevant |
+| S | CI schließt 0 aus, sonst | statistisch gesichert, Größe offen |
+| U | sonst | unentscheidbar; n_eq berichten |
 
-**Bewusst weggelassen:** Wilcoxon-Test, Holm-Korrektur und TOST. Ein
-Konfidenzintervall, das die 0 ausschliesst, trifft dieselbe Aussage wie ein
-Signifikanztest — nur informativer, weil es zusätzlich die Effektgrösse nennt.
-Und wer keine formalen Testentscheidungen trifft, braucht keine Korrektur für
-multiples Testen. Das hält die Auswertung klein, ohne die Beweiskraft zu senken.
+Sättigungspunkt k* = kleinstes k, ab dem alle späteren Δ(j) in Ä liegen; ist ein
+späterer Schritt U, lautet das Ergebnis „nicht entscheidbar“. MDE, n_req und
+n_eq werden je Kontrast aus dessen eigener gepaarter Streuung berechnet.
+Cluster-Bootstrap nur als Kontrolle (`bootstrap_check`), Bonferroni per
+`multiplicity`.
 
-Diese Festlegungen wurden getroffen und committet, **bevor** ein einziges
-Ergebnis auf echten Daten existierte — die Git-Historie belegt das.
+## Reliabilität (`reliability.py`)
+
+Blinde, zeitversetzte Wiederholungsannotation (Lauf 2, ≥ 3 Wochen, ≥ 8
+Sessions). Daraus: Abstandsstatistik (Mittel, Median, P90, P95), Konsistenz-F1
+(τ = 0,2 … 1,0 s) und SESOI-Kandidaten (F1-Differenz des vollen Modells
+zwischen Lauf 1 und 2). Welche Kennzahl τ und SESOI definiert, ist festgelegt in
+`Settings.tau_rule` / `sesoi_rule`; übernommen werden sie mit Herkunftsvermerk
+in `docupilot_settings.json`.
+
+---
+
+## Parameter ohne Dev-Session
+
+Jeder Parameter ist a priori fest, eingefroren oder in-fold kalibriert — die
+vollständige Tabelle steht in `config.PARAMETERS` und im Anhang des Berichts.
+**ACTIVITY_QUIET = 0,08 und _MIN_DWELL_S = 0,5 s sind eingefroren**: Sie
+bestimmen die VLM-Aufrufe und wurden laut Code auf einer Entwicklungssession
+gesweept, die Teil des Korpus ist. Sie werden nicht neu getunt; in der Arbeit
+als Limitation benennen.
+
+## Konfiguration und Methodenvergleich
+
+`docupilot_settings.json` im Korpusverzeichnis hält alle Schalter eines Laufs
+(`config.Settings`) und die Liste der Varianten. Je Variante läuft der volle
+Versuch über 8 Koalitionen; berichtet werden nur Rangfolge der φ und
+Sättigungsklasse. Standard: A0, Kandidatenpool „union“ (Zeitpunkt-Kredit
+v_union({m}) − v_grid({m})), Ereignisse nur mit Teilkurve „Ruhe“ (Beitrag der
+Merkmale nach Rebmann & van der Aa). Weitere Achsen: `burst_pause_s`,
+`audio_peak_mode`, `boundary_definition`, `activity_quiet` (neue VLM-Aufrufe),
+`asr_alignment` (WhisperX, optional).
+
+## Wiederholbarkeit der Modellurteile
+
+```bash
+python -m docupilot.evaluation.repeatability <korpus> --sessions 5 --runs 3
+```
+
+3 Läufe ohne Cache auf 5 Sessions: Anteil identischer Kategorien, Spanne von
+p_boundary, Spanne des F1 der Einzelmodalität. Kostet bis zu 400 VLM-Aufrufe je
+Session und Lauf.
 
 ---
 
@@ -248,59 +166,36 @@ Ergebnis auf echten Daten existierte — die Git-Historie belegt das.
 
 ```
 evaluation/
-  metrics.py         Matching, Precision/Recall/F1, Nullmodell        Schritt 1  [fertig]
-  dataset.py         Ground Truth und Dauer einer Aufnahme            Schritt 1  [fertig]
-  media.py           ein ffprobe je Aufnahme, geteilt                             [fertig]
-  corpus.py          Inhalt eines Korpusverzeichnisses                            [fertig]
-  fusion.py          Kandidaten, Merkmale, Random Forest              Schritt 2+3 [fertig]
-  coupling.py        Kopplung der Kandidaten mit der Ground Truth                 [fertig]
-  experiment.py      LOSO über alle Sessions x 8 Kombinationen        Schritt 3  [fertig]
-  analysis.py        Shapley, Interaktionsindex, Sättigungskurve      Schritt 4  [fertig]
-  statistics.py      Signifikanz, Konfidenzintervalle, Power          Schicht 5  [fertig]
-  synchronization.py gemessener Uhrenversatz der Modalitäten                     [fertig]
-  report.py          fertige Auswertung + Texte, ohne Qt                          [fertig]
-  reliability.py     Intrarater-Auswertung                            Schicht 5  [offen]
+  metrics.py         Matching (Kuhn–Munkres), Precision/Recall/F1, Zufallsniveau
+  dataset.py         Ground Truth je Definition und Lauf, Randregeln, Dauer
+  media.py           ein ffprobe je Aufnahme, geteilt
+  corpus.py          Inhalt eines Korpusverzeichnisses
+  fusion.py          Raster, Merkmale, v(∅), A0, Forest/LogReg, Schwelle
+  calibration.py     in-fold kalibrierte Parameter
+  experiment.py      LOSO über alle Sessions × 8 Koalitionen
+  analysis.py        Shapley, Interaktionsindex, Sättigungskurve
+  statistics.py      Intervalle je Session, Klassenregel, n je Kontrast
+  reliability.py     Test-Retest: τ und SESOI
+  synchronization.py Uhrenversatz, Drift, Satzstart-Vergleich
+  repeatability.py   Stabilität der Modellurteile ohne Cache
+  report.py          fertige Auswertung + Texte, ohne Qt
 ```
 
-Die Charakterisierungstests in `tests/` frieren das Verhalten dieser Module
-ein (Goldens aus dem Stand vor dem Refactoring vom 06.09.2026).
+Die Tests in `tests/` prüfen Eigenschaften statt Goldens — u. a. Raster-
+Identität, Spaltenisolation, Invarianz gegen eine verrauschte fremde Kurve und
+den Leckage-Test mit NaN-Labels der Testsession.
 
-### Festlegungen der Umsetzung
+## Offene Punkte außerhalb des Codes
 
-- **Kandidaten aus den Score-Kurven**, nicht aus `boundaries_s`: Letztere sind
-  bereits bei 0,5 geschwellt; der Klassifikator könnte dann nur entfernen, nie
-  hinzufügen, und die Recall-Obergrenze wäre je Teilmenge festgezurrt.
-- **Fenster-Merkmale (±1 s)** statt Punktwerte: Der Events-Arm verankert einen
-  Kandidaten am Ende eines Eingabebursts, die Annotation am darauf folgenden
-  visuellen Einrasten. Das Fenster absorbiert diesen Versatz, ohne ihn an die
-  Daten anzupassen.
-- **Label-Toleranz fest bei 1 s**, auch während des Toleranz-Sweeps: So variiert
-  der Sweep nur, wie bewertet wird, nicht was das Modell gelernt hat.
-- **Keine Schwellenwert-Anpassung**: `class_weight="balanced"` im Random Forest
-  statt einer je Teilmenge angepassten Schwelle — eine solche Anpassung wäre ein
-  weiterer Weg, über den die Testsession einsickern könnte.
-
-Die Bibliothek muss **headless lauffähig** sein: ein Aufruf, der die
-Ergebnistabelle schreibt. Die GUI orchestriert und zeigt an, sie rechnet nicht.
-Der Lauf dauert Stunden und darf nicht an einem offenen Fenster hängen; ausserdem
-muss das Experiment mit einem Befehl reproduzierbar sein.
-
-Abbildungen für die Arbeit werden aus der exportierten CSV erzeugt, nicht aus
-Qt-Fenstern.
-
----
-
-## Offene Punkte
-
-- **Entwicklungsset abgrenzen:** `_ACTIVITY_QUIET` und `_MIN_DWELL_S` wurden auf
-  session_07 gesweept. Diese Session (und alles weitere, woran getunt wurde) aus
-  dem Evaluationskorpus ausschliessen und im Methodikteil benennen.
-- **Annotationsleitfaden rekonstruieren:** Die Regeln A (nutzerausgelöst),
-  B (neuer persistenter Zustand), C (Ziel statt Mittel) existieren derzeit nur in
-  den Modell-Prompts. Für den Anhang der Arbeit wird ein eigenständiges Dokument
-  benötigt, das belegt, dass die Regeln vor der Annotation feststanden.
-- **Blind annotieren:** Während des Annotierens dürfen keine Modellvorhersagen
-  sichtbar sein, sonst bestätigt die Ground Truth nur noch das Modell.
+- **N1** Klären, nach welcher Definition die 25 Sessions annotiert sind; ggf.
+  nach „Beginn“ neu annotieren. Einträge ohne Definition gelten als „Ende“,
+  der alte Typ „start“ als „Beginn“.
+- **N2** Wiederholungsannotation (Lauf 2) durchführen.
+- **N3** Leitfaden ergänzen und versionieren (`config.GUIDELINE_VERSION`).
+- **N4** Satzanfänge stichprobenartig prüfen (Schwelle für WhisperX).
+- **N5** Entscheidungen festlegen: τ-Regel, SESOI-Regel, Konfidenzniveau,
+  Mehrfachvergleich, primäres Intervall, Early Fusion / TCN.
+- **N7** Voll-Lauf auf fixiertem Commit; Einstellungen, Caches und CSV archivieren.
 
 ---
 
@@ -309,7 +204,9 @@ Qt-Fenstern.
 - Shapley, L. S. (1953): *A Value for n-Person Games.*
 - Grabisch, M.; Roubens, M. (1999): *An axiomatic approach to the concept of
   interaction among players in cooperative games.*
+- Nadeau, C.; Bengio, Y. (2003): *Inference for the Generalization Error.*
+- Rebmann, A.; van der Aa, H. (2023/2024): *Unsupervised task recognition from
+  user interaction streams.*
 - Lakens, D. (2022): *Sample Size Justification.*
 - Lakens, D. (2017): *Equivalence Tests.*
-- Holm, S. (1979): *A simple sequentially rejective multiple test procedure.*
-- Efron, B.; Tibshirani, R. (1993): *An Introduction to the Bootstrap.*
+- Wengelin, Å. (2006): *Examining pauses in writing.*

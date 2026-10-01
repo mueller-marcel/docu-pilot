@@ -7,9 +7,11 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QSlider,
+    QSpinBox,
     QSplitter,
     QStyle,
     QStyleOptionSlider,
@@ -17,6 +19,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from docupilot.config import GUIDELINE_VERSION
 from docupilot.recording.session import RecordingSession
 from docupilot.ui.formatting import format_ms
 from docupilot.ui.widgets.BoundaryDialog import BoundaryDialog
@@ -69,6 +72,11 @@ class AnnotationWindow(QWidget):
     Ground-truth boundaries live exclusively in session.ground_truth_data; this
     page never shows model output while annotating, so the ground truth cannot
     end up confirming the detector.
+
+    Every boundary belongs to an annotation RUN. Run 1 is the annotation; run 2
+    is its blind, time-shifted repetition: while it is selected, nothing of run
+    1 is shown (count, list, feature lanes), so the retest measures the
+    annotator rather than their memory of run 1.
     """
 
     back_requested = Signal()
@@ -185,6 +193,23 @@ class AnnotationWindow(QWidget):
         )
         self._boundary_count_label.clicked.connect(self._show_boundary_dialog)
 
+        run_label = QLabel("Lauf")
+        run_label.setStyleSheet("color:#555; font-size:12px;")
+        self._run_box = QSpinBox()
+        self._run_box.setRange(1, 9)
+        self._run_box.setValue(1)
+        self._run_box.setToolTip(
+            "1 = Annotation · 2 = blinde Wiederholung (mind. 3 Wochen später); "
+            "Grenzen anderer Läufe bleiben ausgeblendet"
+        )
+        self._run_box.valueChanged.connect(self._on_run_changed)
+
+        guideline_label = QLabel("Leitfaden")
+        guideline_label.setStyleSheet("color:#555; font-size:12px;")
+        self._guideline_edit = QLineEdit(GUIDELINE_VERSION)
+        self._guideline_edit.setFixedWidth(48)
+        self._guideline_edit.setToolTip("Version des Annotationsleitfadens, mit jeder Grenze gespeichert")
+
         self._features_button = QPushButton("♪  Features")
         self._features_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._features_button.setToolTip(
@@ -204,7 +229,13 @@ class AnnotationWindow(QWidget):
         layout.addWidget(dir_container)
         layout.addStretch()
         layout.addWidget(self._features_button)
+        layout.addSpacing(10)
+        layout.addWidget(run_label)
+        layout.addWidget(self._run_box)
         layout.addSpacing(6)
+        layout.addWidget(guideline_label)
+        layout.addWidget(self._guideline_edit)
+        layout.addSpacing(10)
         layout.addWidget(self._boundary_count_label)
         return toolbar
 
@@ -256,31 +287,33 @@ class AnnotationWindow(QWidget):
         btn_end.clicked.connect(lambda: self._seek_to(self._duration_ms))
         self._mute_button.clicked.connect(self._toggle_mute)
 
-        self._boundary_button = QPushButton("✂  Grenze setzen (Ende)")
+        # The guideline's definition and the primary one: the first observable
+        # action of the next step.
+        self._boundary_button = QPushButton("✂  Grenze setzen (Beginn)")
         self._boundary_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._boundary_button.setFixedHeight(30)
         self._boundary_button.setToolTip(
-            "Der ausgelöste Zustand ist sichtbar und dauerhaft — die Definition der Arbeit"
+            "Beginn der ersten beobachtbaren Handlung des neuen Schritts — "
+            "die Definition des Annotationsleitfadens"
         )
         self._apply_boundary_idle_style()
-        self._boundary_button.clicked.connect(lambda: self._set_boundary("end"))
+        self._boundary_button.clicked.connect(lambda: self._set_boundary("begin"))
 
-        # The second definition (the exposé's): the next action's first input.
-        # Annotated alongside, never instead, so the evaluation can show how
-        # much of a modality's contribution rides on the definition.
-        self._start_button = QPushButton("▶  Beginn setzen")
-        self._start_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._start_button.setFixedHeight(30)
-        self._start_button.setToolTip(
-            "Erste Eingabe des nächsten Schritts — die Definition des Exposés"
+        # The sensitivity definition: the result of the step has settled on
+        # screen. Annotated alongside, never instead.
+        self._end_button = QPushButton("■  Ende setzen")
+        self._end_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._end_button.setFixedHeight(30)
+        self._end_button.setToolTip(
+            "Ergebnis des Schritts sichtbar und dauerhaft — nur für die Sensitivitätsanalyse"
         )
-        self._start_button.setStyleSheet(
-            "QPushButton{background:#eef2ff;color:#3730a3;border:1.5px solid #6366f1;"
+        self._end_button.setStyleSheet(
+            "QPushButton{background:#f5f5f5;color:#555;border:1.5px solid #bbb;"
             "border-radius:5px;font-size:13px;font-weight:600;padding:0 16px;}"
-            "QPushButton:hover{background:#e0e7ff;}"
-            "QPushButton:pressed{background:#c7d2fe;}"
+            "QPushButton:hover{background:#eee;}"
+            "QPushButton:pressed{background:#e0e0e0;}"
         )
-        self._start_button.clicked.connect(lambda: self._set_boundary("start"))
+        self._end_button.clicked.connect(lambda: self._set_boundary("end"))
 
         transport_row = QHBoxLayout()
         transport_row.setSpacing(6)
@@ -289,7 +322,7 @@ class AnnotationWindow(QWidget):
         transport_row.addSpacing(10)
         transport_row.addWidget(self._mute_button)
         transport_row.addStretch()
-        transport_row.addWidget(self._start_button)
+        transport_row.addWidget(self._end_button)
         transport_row.addSpacing(6)
         transport_row.addWidget(self._boundary_button)
         layout.addLayout(transport_row)
@@ -378,21 +411,33 @@ class AnnotationWindow(QWidget):
 
     # ── Boundary actions ───────────────────────────────────────────────────────
 
-    def _set_boundary(self, kind: str = "end") -> None:
+    @property
+    def _run(self) -> int:
+        return int(self._run_box.value())
+
+    def _set_boundary(self, definition: str = "begin") -> None:
         if self._session is None:
             return
         # The MP4 carries real timestamps, so the player position already is the
         # common clock the events and video use — no conversion needed.
         pos_ms = float(self._player.position())
-        self._session.add_ground_truth_boundary(pos_ms, label=format_ms(pos_ms), kind=kind)
+        self._session.add_ground_truth_boundary(
+            pos_ms, label=format_ms(pos_ms), definition=definition, run=self._run,
+            guideline_version=self._guideline_edit.text().strip(),
+        )
         self._update_boundary_count()
-        if kind == "end":
+        if definition == "begin":
             self._flash_boundary_button()
+
+    def _on_run_changed(self, _run: int) -> None:
+        # Run 2 must stay blind: the feature lanes would show run 1's boundaries.
+        self._features_button.setEnabled(self._run == 1)
+        self._update_boundary_count()
 
     def _show_boundary_dialog(self) -> None:
         if self._session is None:
             return
-        dlg = BoundaryDialog(self._session.ground_truth_data, parent=self)
+        dlg = BoundaryDialog(self._session.ground_truth_data, self._run, parent=self)
         dlg.exec()
         self._session.set_ground_truth_boundaries(dlg.get_boundaries())
         self._update_boundary_count()
@@ -400,11 +445,11 @@ class AnnotationWindow(QWidget):
     def _update_boundary_count(self) -> None:
         if self._session is None:
             return
-        n = self._session.count_boundaries("end")
-        n_start = self._session.count_boundaries("start")
+        n = self._session.count_boundaries("begin", self._run)
+        n_end = self._session.count_boundaries("end", self._run)
         self._boundary_count_label.setText(
-            f"{n} Grenze{'n' if n != 1 else ''} gesetzt"
-            + (f"  ·  {n_start} Beginn" if n_start else "")
+            f"Lauf {self._run}: {n} Grenze{'n' if n != 1 else ''} gesetzt"
+            + (f"  ·  {n_end} Ende" if n_end else "")
         )
 
     def _flash_boundary_button(self) -> None:
@@ -425,7 +470,7 @@ class AnnotationWindow(QWidget):
     # ── Feature dialog ─────────────────────────────────────────────────────────
 
     def _show_feature_dialog(self) -> None:
-        if self._session is None:
+        if self._session is None or self._run != 1:
             return
         if self._feature_dialog is not None:
             self._feature_dialog.close()

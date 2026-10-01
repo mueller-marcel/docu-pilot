@@ -24,6 +24,11 @@ class AvRecorder:
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
+        # Capture time of every frame handed to ffmpeg, on the monotonic clock
+        # the events run on. The video extractor reads these instead of
+        # ffmpeg's wall-clock stamps, so both modalities share ONE clock and an
+        # NTP step during a recording cannot shift one axis against the other.
+        self._frame_times: list[float] = []
         geo = session.screen.geometry()
         self._w = geo.width()
         self._h = geo.height()
@@ -55,6 +60,7 @@ class AvRecorder:
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
+        self._save_frame_times()
 
         self._writer.write(
             {"type": "av_stopped"},
@@ -82,13 +88,13 @@ class AvRecorder:
         }
         with mss.mss() as sct:
             # Arm just before the first grab so events and video share an origin.
-            # ffmpeg stamps frame 0 a few ms later (when it reads it from the
-            # pipe); that small, constant offset — ~40 ms median on the pilot — is
-            # the residual, not a true zero. Measured in evaluation.synchronization.
-            self._session.arm(time.monotonic_ns())
+            t0_ns = time.monotonic_ns()
+            self._session.arm(t0_ns)
+            self._frame_times = []
 
             while not self._stop.is_set():
                 started = time.monotonic()
+                grabbed_ns = time.monotonic_ns()
                 screenshot = sct.grab(region)
                 bgra = np.frombuffer(screenshot.raw, dtype=np.uint8).reshape(
                     screenshot.height, screenshot.width, 4
@@ -99,19 +105,31 @@ class AvRecorder:
 
                 try:
                     if self._proc and self._proc.stdin:
+                        # Stamped only once the frame is certain to reach the
+                        # pipe, so the list and the encoded frames stay 1:1.
                         self._proc.stdin.write(bgr_bytes)
                         self._proc.stdin.flush()
+                        self._frame_times.append((grabbed_ns - t0_ns) / 1e9)
                 except (BrokenPipeError, OSError):
                     break
 
-                # Cap at _FPS; the exact rate is irrelevant because ffmpeg stamps
-                # each frame with the real wall clock, not an assumed rate.
+                # Cap at _FPS; the exact rate is irrelevant because every frame
+                # carries its own capture time.
                 idle = period - (time.monotonic() - started)
                 if idle > 0:
                     time.sleep(idle)
 
     # The cursor is deliberately NOT painted into the frames: it would inject the
     # event stream into the video modality, which must stay independent.
+
+    def _save_frame_times(self) -> None:
+        """Write the capture times beside the recording; a failure only costs
+        the fallback to the container's own frame times."""
+        try:
+            np.save(self._session.frame_times_path,
+                    np.asarray(self._frame_times, dtype=np.float64))
+        except OSError:
+            pass
 
     @staticmethod
     def _finalize(proc: subprocess.Popen, on_done=None) -> None:
@@ -132,13 +150,12 @@ class AvRecorder:
         out = str(self._session.recording_path)
         sys = platform.system()
 
-        # -use_wallclock_as_timestamps stamps each piped frame with ffmpeg's wall
-        # clock at read time (NOT an assumed rate); -fps_mode vfr keeps those
-        # timestamps. Events run on time.monotonic() zeroed at arm() just before
-        # frame 0, so the two axes share an origin to within the pipe start-up
-        # latency (measured ~40 ms, well inside the matching tolerance). They are
-        # different clock families, so a wall-clock step (NTP) mid-recording would
-        # desync — acceptable for the short sessions here.
+        # -use_wallclock_as_timestamps gives each piped frame a real (VFR)
+        # timestamp for playback. The analysis does not rely on it: it reads the
+        # monotonic capture times in frame_times.npy, which requires that every
+        # piped frame is encoded exactly once. -fps_mode passthrough guarantees
+        # that — vfr may drop a frame whose stamp collides with its predecessor,
+        # which would shift the whole list against the decoded frames.
         video_in = [
             "-f", "rawvideo",
             "-vcodec", "rawvideo",
@@ -152,7 +169,7 @@ class AvRecorder:
             "-preset", "ultrafast",
             "-crf", "28",
             "-pix_fmt", "yuv420p",
-            "-fps_mode", "vfr",
+            "-fps_mode", "passthrough",
             "-c:a", "aac",
             "-b:a", "128k",
         ]
