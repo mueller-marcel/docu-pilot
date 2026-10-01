@@ -60,8 +60,7 @@ _PIXEL_CHANGE_EPS = 1.0
 # dwells. Whether it was hit is reported per session.
 _MAX_CALLS = 400
 
-# The activity scan is the expensive, model-free half of this modality and is
-# also what the synchronisation report reads. It is a pure function of the
+# The activity scan is the expensive, model-free half of this modality. It is a pure function of the
 # recording bytes and these two constants, so it is kept beside the recording.
 ACTIVITY_FILE = "video_activity.npz"
 _ACTIVITY_FORMAT = 1
@@ -79,8 +78,7 @@ class ActivityScan:
     n_frames: int
     activity: np.ndarray     # (n_frames,) float32 — largest per-tile pHash distance to the previous frame
     fps: float
-    times_s: np.ndarray      # (n_frames,) float64 — capture time of each frame on the event clock
-    pts_s: np.ndarray        # (n_frames,) float64 — the container's presentation times, first = 0
+    times_s: np.ndarray      # (n_frames,) float64 — presentation time of each frame, session clock
 
 
 @dataclass(frozen=True)
@@ -391,32 +389,6 @@ def _ffprobe_times_s(video_path: str, n_frames: int) -> np.ndarray:
     return parse_frame_times(out, n_frames)
 
 
-def capture_times_s(session: RecordingSession, n_frames: int, pts_s: np.ndarray) -> np.ndarray:
-    """
-    The capture time of each frame on the clock the events use.
-
-    Recordings with frame_times.npy carry it directly — the recorder stamped
-    each frame with the monotonic clock before piping it (C9). Older recordings
-    fall back to the container's presentation times, which ffmpeg took from its
-    wall clock and which share the events' origin only to within the pipe
-    start-up latency.
-
-    :raises RuntimeError: when frame_times.npy does not hold one time per
-        decoded frame — ffmpeg dropped or duplicated frames and no frame can be
-        placed reliably.
-    """
-    path = session.frame_times_path
-    if not path.exists():
-        return pts_s
-    times = np.asarray(np.load(path, allow_pickle=False), dtype=np.float64)
-    if len(times) != n_frames:
-        raise RuntimeError(
-            f"frame_times.npy enthält {len(times)} Zeiten, dekodiert wurden {n_frames} "
-            "Frames — ffmpeg hat Frames verworfen oder dupliziert."
-        )
-    return times
-
-
 def _scan(video_path: str) -> tuple[int, np.ndarray, float]:
     """Stream the video once; return frame count, per-frame activity and the fps."""
     import cv2
@@ -487,7 +459,7 @@ def scan_activity(session: RecordingSession, use_cache: bool = True) -> Activity
     :param use_cache: read a stored scan and store a fresh one. False decodes
         and stores nothing.
     :raises RuntimeError: when the frame times cannot be read (see
-        parse_frame_times and capture_times_s).
+        parse_frame_times).
     """
     path = session.session_dir / ACTIVITY_FILE
     key = _ACTIVITY_KEY if use_cache else None
@@ -509,17 +481,14 @@ def scan_activity(session: RecordingSession, use_cache: bool = True) -> Activity
     if loaded is None:
         video_path = str(session.recording_path)
         n_frames, activity, fps = _scan(video_path)
-        pts_s = _ffprobe_times_s(video_path, n_frames)
+        times_s = _ffprobe_times_s(video_path, n_frames)
         if key is not None:
             store.write_npz(path, key=np.array(key), n_frames=np.array(n_frames),
-                            activity=activity, fps=np.array(fps), times_s=pts_s)
+                            activity=activity, fps=np.array(fps), times_s=times_s)
     else:
-        n_frames, activity, fps, pts_s = loaded
+        n_frames, activity, fps, times_s = loaded
 
-    return ActivityScan(
-        n_frames=n_frames, activity=activity, fps=fps,
-        times_s=capture_times_s(session, n_frames, pts_s), pts_s=pts_s,
-    )
+    return ActivityScan(n_frames=n_frames, activity=activity, fps=fps, times_s=times_s)
 
 
 # ── Stage 1: raw ──────────────────────────────────────────────────────────────

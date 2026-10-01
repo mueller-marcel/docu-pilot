@@ -9,7 +9,7 @@ The report answers the three sub-questions on the primary run and surrounds
 the answer with what a reviewer will ask for: both confidence intervals and the
 class of every quantity (C6), the sample size each contrast would need, the
 method comparison (C12), the recall ceiling, the
-in-fold calibration (C8), the annotation's reliability (C5), the clock sync
+in-fold calibration (C8), the annotation's reliability (C5)
 and where every model verdict came from (C11).
 """
 
@@ -25,11 +25,9 @@ import numpy as np
 from docupilot.config import PARAMETERS, Settings
 from docupilot.evaluation import (
     analysis, calibration, experiment, fusion, metrics, reliability, statistics,
-    synchronization,
 )
 from docupilot.evaluation.experiment import ExperimentResult, SessionData
 from docupilot.evaluation.statistics import Estimate, SaturationPoint
-from docupilot.recording.session import RecordingSession
 from docupilot.segmentation import MODALITIES, BoundaryEvidence
 
 # Same colours the feature lanes use, so a modality looks the same everywhere.
@@ -94,7 +92,6 @@ class Report:
     ceiling: float = float("nan")
     """Recall ceiling: share of boundaries some modality proposes within ±τ."""
     reliability: reliability.Reliability | None = None
-    sync: dict[str, float] = field(default_factory=dict)
     provenance: dict[str, object] = field(default_factory=dict)
     bootstrap: dict[str, tuple[float, float]] = field(default_factory=dict)
 
@@ -341,56 +338,6 @@ def analyse(
             for e in [*shapley.values(), *interactions.values(), *steps.values()]
         }
     return report
-
-
-def measure_sync(
-    directories: Sequence[Path],
-    on_progress: Callable[[str, int, int], None] | None = None,
-    is_cancelled: Callable[[], bool] | None = None,
-) -> dict[str, float]:
-    """
-    Aggregate the measured clock offsets over the corpus — the evidence that
-    the modalities share a time base rather than an assumption of it.
-
-    :param on_progress: called as (session name, done, total).
-    :param is_cancelled: polled before each session; True stops the loop and
-        returns what was aggregated so far.
-    """
-    stream, click_median, click_p95, click_absmax, drift_max = [], [], [], [], []
-    total = len(directories)
-    for i, directory in enumerate(directories, start=1):
-        if is_cancelled is not None and is_cancelled():
-            break
-        if on_progress is not None:
-            on_progress(directory.name, i, total)
-        try:
-            one = synchronization.report(RecordingSession.from_directory(directory))
-        except Exception:                          # noqa: BLE001 — sync is auxiliary
-            continue
-        offset = one.get("stream_offset_ms")
-        if offset is not None and offset == offset:   # not NaN
-            stream.append(offset)
-        if "click_median_ms" in one:
-            click_median.append(one["click_median_ms"])
-            click_p95.append(one["click_p95_ms"])
-            click_absmax.append(one["click_absmax_ms"])
-        if "drift_absmax_ms" in one:
-            drift_max.append(one["drift_absmax_ms"])
-
-    def agg(values: list[float], fn) -> float:
-        return float(fn(values)) if values else float("nan")
-
-    return {
-        "stream_offset_ms": agg(stream, np.median),
-        "click_median_ms": agg(click_median, np.median),
-        # Max over sessions, deliberately conservative: no session has more
-        # than 5 % of its reactions beyond this value.
-        "click_p95_ms": agg(click_p95, np.max),
-        "click_absmax_ms": agg(click_absmax, np.max),
-        "drift_absmax_ms": agg(drift_max, np.max),
-        "n_drift": float(len(drift_max)),
-        "n": float(len(click_median)),
-    }
 
 
 # ── Rows for the charts ──────────────────────────────────────────────────────
@@ -667,29 +614,6 @@ def reliability_text(report: Report) -> str:
     return "\n".join(lines)
 
 
-def sync_text(sync: dict[str, float], tau_s: float) -> str:
-    """Clock offset between the streams, click-to-reaction latency and, for
-    recordings with monotonic frame times, the clock drift."""
-    if not sync:
-        return "   (keine Synchronisationsmessung)"
-
-    def ms(key: str) -> str:
-        value = sync.get(key, float("nan"))
-        return "–" if value != value else f"{value:.0f} ms"
-
-    lines = [
-        f"   Stream-Offset (Audio↔Video): {ms('stream_offset_ms')}   ·   "
-        f"Klick→Bildschirmreaktion Median: {ms('click_median_ms')} · P95: {ms('click_p95_ms')} "
-        f"(max {ms('click_absmax_ms')}, n={int(sync.get('n', 0))})",
-        f"   Uhrdrift Container ↔ monotone Framezeiten: max {ms('drift_absmax_ms')} "
-        f"({int(sync.get('n_drift', 0))} Sessions mit frame_times.npy)",
-        "   Die Klick→Reaktion-Latenz ist kein Uhrenfehler, sondern die Zeit bis zum sichtbaren "
-        f"Ergebnis; die Fenstermerkmale fangen sie auf. τ = {tau_s:.2f} s ist über die "
-        "Annotationsreliabilität zu begründen.",
-    ]
-    return "\n".join(lines)
-
-
 def provenance_text(report: Report) -> str:
     """Which model answered when, the budget cap, and unclassified keys (C11, C14)."""
     p = report.provenance
@@ -803,9 +727,6 @@ def sections(report: Report) -> list[Section]:
         Section("Reliabilität der Annotation",
                 "Blinde, zeitversetzte Wiederholung: Abstände, Konsistenz, SESOI-Kandidaten.",
                 text=reliability_text(report)),
-        Section("Zeitsynchronisation",
-                "Gemessener Uhrenversatz und Drift, getrennt von der UI-Latenz.",
-                text=sync_text(report.sync, report.tau_s)),
         Section("Herkunft der Modellurteile",
                 "Modell-IDs, Abrufdaten, Aufrufbudget und nicht klassifizierte Tasten.",
                 text=provenance_text(report)),
