@@ -132,18 +132,7 @@ class _ExperimentWorker(QObject):
             if self._cancelled:
                 self.failed.emit("Abgebrochen.")
                 return
-            result = rep.analyse(data, primary, variants)
-            # τ justification runs last and cancellable: the main result is
-            # already computed, and a failure here must never discard it.
-            try:
-                result.sync = rep.measure_sync(
-                    self._directories,
-                    on_progress=self._progress("Synchronisation"),
-                    is_cancelled=lambda: self._cancelled,
-                )
-            except Exception:                     # noqa: BLE001 — never discard the result
-                pass
-            self.done.emit(result)
+            self.done.emit(rep.analyse(data, primary, variants))
         except Exception as exc:                      # noqa: BLE001 — shown, not hidden
             self.failed.emit(str(exc))
 

@@ -12,7 +12,7 @@ the annotated boundaries, then attribute the result to the modalities.
     analysis.py        Shapley values, interaction index, saturation curve
     statistics.py      per-session intervals, class rule, sample size per contrast
     reliability.py     test-retest of the annotation: τ and SESOI
-    synchronization.py measure the modality clock alignment, don't assume it
+    alignment.py       Whisper against WhisperX sentence starts (C10)
     repeatability.py   how stable the model verdicts are without the cache
     report.py          the finished evaluation and the sentences that state it
 """
@@ -35,7 +35,7 @@ from docupilot.evaluation.experiment import (
     subset_values,
 )
 from docupilot.evaluation.metrics import Match, chance_level, match
-from docupilot.evaluation.report import Report, analyse, measure_sync
+from docupilot.evaluation.report import Report, analyse
 
 __all__ = [
     "CorpusScan",
@@ -54,7 +54,6 @@ __all__ = [
     "load",
     "marginal_gain",
     "match",
-    "measure_sync",
     "run",
     "saturation",
     "scan",

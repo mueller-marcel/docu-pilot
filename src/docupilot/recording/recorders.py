@@ -15,6 +15,15 @@ from docupilot.recording.session import EventWriter, Microphone, RecordingSessio
 
 
 class AvRecorder:
+    """
+    One ffmpeg process records screen and microphone into recording.mp4.
+
+    ffmpeg stamps every piped frame with its wall clock, and the MP4 starts at
+    the first frame. The session origin is therefore set on the same clock the
+    moment ffmpeg has taken that first frame, so the events run on the MP4's
+    clock.
+    """
+
     _FPS = 10
 
     def __init__(self, session: RecordingSession, writer: EventWriter, on_done=None) -> None:
@@ -24,11 +33,6 @@ class AvRecorder:
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
-        # Capture time of every frame handed to ffmpeg, on the monotonic clock
-        # the events run on. The video extractor reads these instead of
-        # ffmpeg's wall-clock stamps, so both modalities share ONE clock and an
-        # NTP step during a recording cannot shift one axis against the other.
-        self._frame_times: list[float] = []
         geo = session.screen.geometry()
         self._w = geo.width()
         self._h = geo.height()
@@ -44,10 +48,10 @@ class AvRecorder:
         self._thread = threading.Thread(target=self._capture_loop, daemon=True, name="av-capture")
         self._thread.start()
 
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + 5.0
         while not self._session.is_armed:
             if time.monotonic() > deadline:
-                raise RuntimeError("AvRecorder: arm() timed out")
+                raise RuntimeError("AvRecorder: ffmpeg hat keinen Frame angenommen")
             time.sleep(0.001)
 
         self._writer.write(
@@ -60,7 +64,6 @@ class AvRecorder:
         if self._thread:
             self._thread.join(timeout=5)
             self._thread = None
-        self._save_frame_times()
 
         self._writer.write(
             {"type": "av_stopped"},
@@ -87,14 +90,8 @@ class AvRecorder:
             "height": geo.height(),
         }
         with mss.mss() as sct:
-            # Arm just before the first grab so events and video share an origin.
-            t0_ns = time.monotonic_ns()
-            self._session.arm(t0_ns)
-            self._frame_times = []
-
             while not self._stop.is_set():
                 started = time.monotonic()
-                grabbed_ns = time.monotonic_ns()
                 screenshot = sct.grab(region)
                 bgra = np.frombuffer(screenshot.raw, dtype=np.uint8).reshape(
                     screenshot.height, screenshot.width, 4
@@ -104,32 +101,21 @@ class AvRecorder:
                 bgr_bytes = bgra[:, :, :3].tobytes()
 
                 try:
-                    if self._proc and self._proc.stdin:
-                        # Stamped only once the frame is certain to reach the
-                        # pipe, so the list and the encoded frames stay 1:1.
-                        self._proc.stdin.write(bgr_bytes)
-                        self._proc.stdin.flush()
-                        self._frame_times.append((grabbed_ns - t0_ns) / 1e9)
+                    self._proc.stdin.write(bgr_bytes)
+                    self._proc.stdin.flush()
                 except (BrokenPipeError, OSError):
                     break
+                # The write returns once ffmpeg has read the frame, which is
+                # when ffmpeg stamps it: this instant is 0 in the MP4.
+                if not self._session.is_armed:
+                    self._session.arm(time.time_ns())
 
-                # Cap at _FPS; the exact rate is irrelevant because every frame
-                # carries its own capture time.
                 idle = period - (time.monotonic() - started)
                 if idle > 0:
                     time.sleep(idle)
 
     # The cursor is deliberately NOT painted into the frames: it would inject the
     # event stream into the video modality, which must stay independent.
-
-    def _save_frame_times(self) -> None:
-        """Write the capture times beside the recording; a failure only costs
-        the fallback to the container's own frame times."""
-        try:
-            np.save(self._session.frame_times_path,
-                    np.asarray(self._frame_times, dtype=np.float64))
-        except OSError:
-            pass
 
     @staticmethod
     def _finalize(proc: subprocess.Popen, on_done=None) -> None:
@@ -147,33 +133,7 @@ class AvRecorder:
 
     def _build_cmd(self) -> list[str]:
         mic = self._session.microphone.description()
-        out = str(self._session.recording_path)
         sys = platform.system()
-
-        # -use_wallclock_as_timestamps gives each piped frame a real (VFR)
-        # timestamp for playback. The analysis does not rely on it: it reads the
-        # monotonic capture times in frame_times.npy, which requires that every
-        # piped frame is encoded exactly once. -fps_mode passthrough guarantees
-        # that — vfr may drop a frame whose stamp collides with its predecessor,
-        # which would shift the whole list against the decoded frames.
-        video_in = [
-            "-f", "rawvideo",
-            "-vcodec", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "-s", f"{self._w}x{self._h}",
-            "-use_wallclock_as_timestamps", "1",
-            "-i", "pipe:0",
-        ]
-        codec = [
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "28",
-            "-pix_fmt", "yuv420p",
-            "-fps_mode", "passthrough",
-            "-c:a", "aac",
-            "-b:a", "128k",
-        ]
-
         if sys == "Windows":
             audio_in = ["-f", "dshow", "-i", f"audio={mic}"]
         elif sys == "Darwin":
@@ -181,13 +141,27 @@ class AvRecorder:
         else:
             audio_in = ["-f", "pulse", "-i", mic]
 
-        return (
-            ["ffmpeg", "-loglevel", "warning", "-y"]
-            + video_in
-            + audio_in
-            + codec
-            + ["-shortest", out]
-        )
+        return [
+            "ffmpeg", "-loglevel", "warning", "-y",
+            # Each piped frame gets ffmpeg's wall clock as its timestamp (VFR).
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self._w}x{self._h}",
+            "-use_wallclock_as_timestamps", "1",
+            "-i", "pipe:0",
+            *audio_in,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "28",
+            "-pix_fmt", "yuv420p",
+            # Keep every frame at its own timestamp instead of resampling to CFR.
+            "-fps_mode", "passthrough",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-shortest",
+            str(self._session.recording_path),
+        ]
 
 
 class InputRecorder:

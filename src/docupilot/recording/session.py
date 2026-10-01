@@ -88,17 +88,13 @@ class RecordingSession:
 
     session_id:         uuid.UUID = field(default_factory=uuid.uuid4)
     started_at_utc:     datetime  = field(default_factory=lambda: datetime.now(timezone.utc))
-    start_monotonic_ns: int       = field(default=0, init=False)
+    start_wallclock_ns: int       = field(default=0, init=False)
     _armed:             bool      = field(default=False, init=False, repr=False)
 
     recording_file_name:    str  = "recording.mp4"
     events_file_name:       str  = "events.json"
     ground_truth_file_name: str  = "ground_truth.json"
-    # Capture time of every frame on the monotonic clock the events use. Only
-    # recordings made after it was introduced have it; older ones fall back to
-    # the container's presentation times.
-    frame_times_file_name:  str  = "frame_times.npy"
-    base_dir:               Path = field(
+    base_dir:              Path = field(
         default_factory=lambda: Path(tempfile.gettempdir()) / "docupilot"
     )
     session_dir: Path = field(init=False)
@@ -294,8 +290,8 @@ class RecordingSession:
     # ── Clock ────────────────────────────────────────────────────────────
 
     def arm(self, t0_ns: int) -> None:
-        """Fix the shared clock origin every modality is timed against."""
-        self.start_monotonic_ns = t0_ns
+        """Fix the origin: the wall-clock time of the MP4's first frame."""
+        self.start_wallclock_ns = t0_ns
         self._armed = True
 
     @property
@@ -303,8 +299,8 @@ class RecordingSession:
         return self._armed
 
     def session_time_ms(self) -> float:
-        """Milliseconds since t0. Negative before arm()."""
-        return round((time.monotonic_ns() - self.start_monotonic_ns) / 1_000_000, 3)
+        """Milliseconds since t0, on the wall clock ffmpeg stamps the frames with."""
+        return round((time.time_ns() - self.start_wallclock_ns) / 1_000_000, 3)
 
     # ── Paths and metadata ───────────────────────────────────────────────
 
@@ -319,10 +315,6 @@ class RecordingSession:
     @property
     def ground_truth_path(self) -> Path:
         return self.session_dir / self.ground_truth_file_name
-
-    @property
-    def frame_times_path(self) -> Path:
-        return self.session_dir / self.frame_times_file_name
 
     def to_metadata_dict(self) -> dict[str, Any]:
         geo = self.screen.geometry()

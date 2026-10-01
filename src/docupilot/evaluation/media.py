@@ -1,10 +1,8 @@
 """
-Container facts read off a recording with ffprobe: duration and per-stream
-start times.
+Container facts read off a recording with ffprobe: its duration.
 
-One probe per file. The duration is needed by the chance level and the stream
-offset by the synchronisation report; both used to spawn their own ffprobe, so a
-corpus run paid the process start-up twice per session for the same header.
+One probe per file, memoised, so a corpus run does not pay the process start-up
+again for the same header.
 """
 
 from __future__ import annotations
@@ -24,9 +22,6 @@ class MediaInfo:
     """The duration exactly as ffprobe printed it; empty when it printed none.
     Kept as text so the caller decides how a missing value is reported."""
 
-    stream_start_s: dict[str, float]
-    """First timestamp per codec type ("audio", "video"); NaN when absent."""
-
     @property
     def duration_s(self) -> float:
         """
@@ -43,18 +38,11 @@ class MediaInfo:
     @classmethod
     def parse(cls, ffprobe_json: str) -> "MediaInfo":
         """
-        Build from ffprobe's JSON output. Missing fields are absent rather than
-        an error: a file without an audio stream is a legitimate recording, and
-        only the caller knows whether that matters.
+        Build from ffprobe's JSON output. A missing duration is not an error
+        here; only the caller knows whether it matters.
         """
         parsed = json.loads(ffprobe_json or "{}")
-        return cls(
-            duration_raw=str(parsed.get("format", {}).get("duration", "")).strip(),
-            stream_start_s={
-                s.get("codec_type"): float(s.get("start_time", "nan"))
-                for s in parsed.get("streams", [])
-            },
-        )
+        return cls(duration_raw=str(parsed.get("format", {}).get("duration", "")).strip())
 
 
 # Keyed on identity AND size/mtime: the corpus lives in a synced folder, so a
@@ -73,13 +61,13 @@ def _stat_key(path: Path) -> tuple[str, int, int] | None:
 
 def probe(path: Path | str) -> MediaInfo:
     """
-    Read duration and stream start times in ONE ffprobe call.
+    Read the duration with ffprobe.
 
     Memoised per (path, size, mtime) for the lifetime of the process, so every
     consumer of the same file shares a single probe.
 
     :param path: the MP4.
-    :return: the header facts; a missing stream is simply absent from the map.
+    :return: the header facts.
     """
     path = Path(path)
     key = _stat_key(path)
@@ -88,7 +76,7 @@ def probe(path: Path | str) -> MediaInfo:
 
     out = subprocess.run(
         ["ffprobe", "-v", "error",
-         "-show_entries", "format=duration:stream=codec_type,start_time",
+         "-show_entries", "format=duration",
          "-of", "json", str(path)],
         capture_output=True, text=True,
     ).stdout

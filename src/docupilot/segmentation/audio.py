@@ -54,6 +54,14 @@ _SPACY_MODELS = ("de_core_news_lg", "de_core_news_md", "de_core_news_sm")
 # and there is no announcement gap to take a median of.
 _LAST_WINDOW_FALLBACK_S = 8.0
 
+# Where speech begins, for snap_to_speech_onset. SET, not tuned: how far either
+# side of Whisper's start to look, how far above the noise floor (its 10th
+# percentile) speech lies, and how long it must stay there.
+_ONSET_BACK_S = 0.2
+_ONSET_AHEAD_S = 1.0
+_ONSET_ABOVE_FLOOR_DB = 15.0
+_ONSET_SUSTAIN_S = 0.05
+
 # The category of a sentence that announces an operation.
 OPERATION = "OPERATION"
 
@@ -258,12 +266,48 @@ def sentences_from_words(full_text: str, words: list[dict]) -> list[tuple[float,
     return out
 
 
-def _duration_s(session: RecordingSession) -> float:
-    """Length of the audio track. Decoded, not read off the container header."""
+def _load_audio(session: RecordingSession) -> tuple[np.ndarray, int]:
+    """The audio track, decoded (its length is not read off the container header)."""
     import librosa
 
     y, sr = librosa.load(str(session.recording_path))
-    return len(y) / float(sr)
+    return y, int(sr)
+
+
+def snap_to_speech_onset(
+    parts: list[tuple[float, float, str]], y: np.ndarray, sr: int
+) -> list[tuple[float, float, str]]:
+    """
+    Move each sentence start to where speech actually begins.
+
+    Whisper's cross-attention word times put a sentence start into the silence
+    before it — measured 0.3 s early in the median, up to 0.5 s, on speech with
+    known onsets. The true onset is the first sustained rise of the signal above
+    the session's noise floor in [start − _ONSET_BACK_S, start + _ONSET_AHEAD_S];
+    "sustained" keeps a key click in the pause from counting as speech. A start
+    without such a rise is kept.
+    """
+    hop = int(sr * 0.01)
+    if len(y) < hop * 2:
+        return parts
+    step = hop / sr
+    frames = len(y) // hop
+    rms = np.sqrt(np.mean(y[: frames * hop].reshape(frames, hop) ** 2, axis=1))
+    db = 20 * np.log10(rms + 1e-10)
+    loud = db > np.percentile(db, 10) + _ONSET_ABOVE_FLOOR_DB
+    need = max(int(_ONSET_SUSTAIN_S / step), 1)
+    # sustained[i]: frames i .. i+need-1 are all loud
+    run = np.convolve(loud.astype(int), np.ones(need, dtype=int))[need - 1:]
+    sustained = run[:frames] >= need
+
+    out = []
+    for start, end, text in parts:
+        lo = max(int((start - _ONSET_BACK_S) / step), 0)
+        hi = min(int(min(start + _ONSET_AHEAD_S, end) / step), frames)
+        hits = np.flatnonzero(sustained[lo:hi])
+        onset = round((lo + int(hits[0])) * step, 3) if len(hits) else start
+        out.append((onset, max(onset, end), text))
+    return out
 
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
@@ -333,6 +377,7 @@ def raw_key(settings: Settings) -> str:
     return "|".join((
         _WHISPER_MODEL, settings.asr_alignment, ",".join(_SPACY_MODELS),
         judge.MODEL, judge.PROMPT_VERSION,
+        f"onset{_ONSET_BACK_S},{_ONSET_AHEAD_S},{_ONSET_ABOVE_FLOOR_DB},{_ONSET_SUSTAIN_S}",
     ))
 
 
@@ -407,8 +452,11 @@ def extract_raw(
 
     if on_progress is not None:
         on_progress(0, 2)
-    duration_s = _duration_s(session)
+    y, sr = _load_audio(session)
+    duration_s = len(y) / float(sr)
     parts = sentences_from_words(*_transcribe(session, settings.asr_alignment))
+    if settings.asr_alignment == "whisper":
+        parts = snap_to_speech_onset(parts, y, sr)
     if not parts:
         raw = AudioRaw(duration_s, [])
         if use_cache and reuse_verdicts:
