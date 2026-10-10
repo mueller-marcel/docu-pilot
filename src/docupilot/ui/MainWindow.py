@@ -55,7 +55,8 @@ class MainWindow(QMainWindow):
         self.microphone_selector: MicrophoneSelectorWidget | None = None
         self.record_button_widget: RecordButtonWidget | None = None
         self.annotation_window: AnnotationWindow | None = None
-        self.experiment_window: ExperimentWindow | None = None
+        # Created up front: its deletion actions sit in the menu bar from the start.
+        self.experiment_window = ExperimentWindow(self)
 
         self._stack = QStackedWidget()
         self.setCentralWidget(self._stack)
@@ -126,7 +127,9 @@ class MainWindow(QMainWindow):
         """
         Menu bar: "Datei > Öffnen" loads an existing session (recording.mp4 +
         events.json, optional ground_truth.json) from a directory; "Auswertung"
-        reaches the corpus experiment.
+        loads a corpus into the experiment window and deletes its generated
+        files. The deletion entries belong to the experiment window and stay
+        disabled until a corpus is loaded there.
         """
 
         file_menu = self.menuBar().addMenu("&Datei")
@@ -138,21 +141,22 @@ class MainWindow(QMainWindow):
 
         analysis_menu = self.menuBar().addMenu("&Auswertung")
 
-        run_corpus_action = QAction("&Korpus auswählen und auswerten…", self)
-        run_corpus_action.triggered.connect(self._on_run_corpus)
-        analysis_menu.addAction(run_corpus_action)
+        choose_corpus_action = QAction("&Korpus auswählen…", self)
+        choose_corpus_action.triggered.connect(self._on_choose_corpus)
+        analysis_menu.addAction(choose_corpus_action)
 
         experiment_action = QAction("Auswertungsfenster &öffnen…", self)
         experiment_action.triggered.connect(self._on_open_experiment)
         analysis_menu.addAction(experiment_action)
 
+        analysis_menu.addSeparator()
+        analysis_menu.addActions(self.experiment_window.deletion_actions)
+
     def _show_experiment_window(self) -> ExperimentWindow:
         """
-        The one experiment window, created on first use and brought to front.
-        Non-modal, so an hours-long run does not block the rest of the app.
+        Bring the one experiment window to front. Non-modal, so an hours-long
+        run does not block the rest of the app.
         """
-        if self.experiment_window is None:
-            self.experiment_window = ExperimentWindow(self)
         self.experiment_window.show()
         self.experiment_window.raise_()
         self.experiment_window.activateWindow()
@@ -161,18 +165,18 @@ class MainWindow(QMainWindow):
     def _on_open_experiment(self) -> None:
         self._show_experiment_window()
 
-    def _on_run_corpus(self) -> None:
+    def _on_choose_corpus(self) -> None:
         """
-        Pick a corpus directory and start the whole workflow (segmentation
-        through evaluation) at once. Each session's model verdicts are cached
-        beside it, so a session goes through the cloud model only once.
+        Pick a corpus directory and load it into the experiment window. The
+        evaluation itself starts only from that window, so choosing a corpus
+        never launches the pipeline by itself.
         """
         directory = QFileDialog.getExistingDirectory(
             self, "Korpus-Verzeichnis wählen"
         )
         if not directory:
             return
-        self._show_experiment_window().run_directory(Path(directory))
+        self._show_experiment_window().open_corpus(Path(directory))
 
     def _show_recorder_page(self) -> None:
         """

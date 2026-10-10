@@ -15,6 +15,15 @@ from docupilot.recording.session import EventWriter, Microphone, RecordingSessio
 
 
 class AvRecorder:
+    """
+    One ffmpeg process records screen and microphone into recording.mp4.
+
+    ffmpeg stamps every piped frame with its wall clock, and the MP4 starts at
+    the first frame. The session origin is therefore set on the same clock the
+    moment ffmpeg has taken that first frame, so the events run on the MP4's
+    clock.
+    """
+
     _FPS = 10
 
     def __init__(self, session: RecordingSession, writer: EventWriter, on_done=None) -> None:
@@ -39,10 +48,10 @@ class AvRecorder:
         self._thread = threading.Thread(target=self._capture_loop, daemon=True, name="av-capture")
         self._thread.start()
 
-        deadline = time.monotonic() + 2.0
+        deadline = time.monotonic() + 5.0
         while not self._session.is_armed:
             if time.monotonic() > deadline:
-                raise RuntimeError("AvRecorder: arm() timed out")
+                raise RuntimeError("AvRecorder: ffmpeg hat keinen Frame angenommen")
             time.sleep(0.001)
 
         self._writer.write(
@@ -81,12 +90,6 @@ class AvRecorder:
             "height": geo.height(),
         }
         with mss.mss() as sct:
-            # Arm just before the first grab so events and video share an origin.
-            # ffmpeg stamps frame 0 a few ms later (when it reads it from the
-            # pipe); that small, constant offset — ~40 ms median on the pilot — is
-            # the residual, not a true zero. Measured in evaluation.synchronization.
-            self._session.arm(time.monotonic_ns())
-
             while not self._stop.is_set():
                 started = time.monotonic()
                 screenshot = sct.grab(region)
@@ -98,14 +101,15 @@ class AvRecorder:
                 bgr_bytes = bgra[:, :, :3].tobytes()
 
                 try:
-                    if self._proc and self._proc.stdin:
-                        self._proc.stdin.write(bgr_bytes)
-                        self._proc.stdin.flush()
+                    self._proc.stdin.write(bgr_bytes)
+                    self._proc.stdin.flush()
                 except (BrokenPipeError, OSError):
                     break
+                # The write returns once ffmpeg has read the frame, which is
+                # when ffmpeg stamps it: this instant is 0 in the MP4.
+                if not self._session.is_armed:
+                    self._session.arm(time.time_ns())
 
-                # Cap at _FPS; the exact rate is irrelevant because ffmpeg stamps
-                # each frame with the real wall clock, not an assumed rate.
                 idle = period - (time.monotonic() - started)
                 if idle > 0:
                     time.sleep(idle)
@@ -129,34 +133,7 @@ class AvRecorder:
 
     def _build_cmd(self) -> list[str]:
         mic = self._session.microphone.description()
-        out = str(self._session.recording_path)
         sys = platform.system()
-
-        # -use_wallclock_as_timestamps stamps each piped frame with ffmpeg's wall
-        # clock at read time (NOT an assumed rate); -fps_mode vfr keeps those
-        # timestamps. Events run on time.monotonic() zeroed at arm() just before
-        # frame 0, so the two axes share an origin to within the pipe start-up
-        # latency (measured ~40 ms, well inside the matching tolerance). They are
-        # different clock families, so a wall-clock step (NTP) mid-recording would
-        # desync — acceptable for the short sessions here.
-        video_in = [
-            "-f", "rawvideo",
-            "-vcodec", "rawvideo",
-            "-pix_fmt", "bgr24",
-            "-s", f"{self._w}x{self._h}",
-            "-use_wallclock_as_timestamps", "1",
-            "-i", "pipe:0",
-        ]
-        codec = [
-            "-c:v", "libx264",
-            "-preset", "ultrafast",
-            "-crf", "28",
-            "-pix_fmt", "yuv420p",
-            "-fps_mode", "vfr",
-            "-c:a", "aac",
-            "-b:a", "128k",
-        ]
-
         if sys == "Windows":
             audio_in = ["-f", "dshow", "-i", f"audio={mic}"]
         elif sys == "Darwin":
@@ -164,13 +141,27 @@ class AvRecorder:
         else:
             audio_in = ["-f", "pulse", "-i", mic]
 
-        return (
-            ["ffmpeg", "-loglevel", "warning", "-y"]
-            + video_in
-            + audio_in
-            + codec
-            + ["-shortest", out]
-        )
+        return [
+            "ffmpeg", "-loglevel", "warning", "-y",
+            # Each piped frame gets ffmpeg's wall clock as its timestamp (VFR).
+            "-f", "rawvideo",
+            "-vcodec", "rawvideo",
+            "-pix_fmt", "bgr24",
+            "-s", f"{self._w}x{self._h}",
+            "-use_wallclock_as_timestamps", "1",
+            "-i", "pipe:0",
+            *audio_in,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-crf", "28",
+            "-pix_fmt", "yuv420p",
+            # Keep every frame at its own timestamp instead of resampling to CFR.
+            "-fps_mode", "passthrough",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-shortest",
+            str(self._session.recording_path),
+        ]
 
 
 class InputRecorder:

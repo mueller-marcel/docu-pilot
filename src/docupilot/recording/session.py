@@ -40,13 +40,18 @@ _INPUT_EVENT_TYPES = frozenset(
     {"mouse_click", "key_press", "key_release", "mouse_scroll"}
 )
 
-# The two boundary definitions a session can be annotated with. "end" is the
-# thesis' definition (the action's result has settled on screen); "start" is
-# the exposé's reading (the next action's first input). Both are kept so the
-# evaluation can show how much of a modality's contribution depends on the
-# choice. Entries without a kind predate the distinction and are "end".
-BOUNDARY_KINDS: tuple[str, ...] = ("end", "start")
-DEFAULT_BOUNDARY_KIND = "end"
+# The two boundary definitions a session can be annotated with. "begin" is the
+# guideline's definition and the primary one: the first observable action of
+# the next step. "end" (the action's result has settled on screen) is kept only
+# for the sensitivity run.
+BOUNDARY_DEFINITIONS: tuple[str, ...] = ("begin", "end")
+DEFAULT_DEFINITION = "begin"
+
+# Entries written before the "definition" field carried a "kind": "start" was
+# the old name of "begin", and an entry without any kind was an "end" boundary
+# — the old window's only button.
+_LEGACY_KINDS = {"start": "begin", "end": "end"}
+_LEGACY_DEFAULT = "end"
 
 
 # A session opened from disk has no real hardware behind it. These stubs satisfy
@@ -83,13 +88,13 @@ class RecordingSession:
 
     session_id:         uuid.UUID = field(default_factory=uuid.uuid4)
     started_at_utc:     datetime  = field(default_factory=lambda: datetime.now(timezone.utc))
-    start_monotonic_ns: int       = field(default=0, init=False)
+    start_wallclock_ns: int       = field(default=0, init=False)
     _armed:             bool      = field(default=False, init=False, repr=False)
 
     recording_file_name:    str  = "recording.mp4"
     events_file_name:       str  = "events.json"
     ground_truth_file_name: str  = "ground_truth.json"
-    base_dir:               Path = field(
+    base_dir:              Path = field(
         default_factory=lambda: Path(tempfile.gettempdir()) / "docupilot"
     )
     session_dir: Path = field(init=False)
@@ -189,35 +194,71 @@ class RecordingSession:
             json.dump(self.ground_truth_data, f, ensure_ascii=False, indent=2)
 
     def add_ground_truth_boundary(
-        self, t_ms: float, label: str | None = None, kind: str = DEFAULT_BOUNDARY_KIND
+        self,
+        t_ms: float,
+        label: str | None = None,
+        definition: str = DEFAULT_DEFINITION,
+        run: int = 1,
+        guideline_version: str = "",
     ) -> None:
         """
         Append one boundary and save at once. Keeps the entry schema
-        (t_ms, label, kind, created_at_utc) in one place.
+        (t_ms, label, definition, run, annotated_at, guideline_version) in one
+        place.
 
         :param t_ms: the boundary's time in milliseconds.
         :param label: display name, e.g. a formatted timestamp.
-        :param kind: which definition the boundary follows, see BOUNDARY_KINDS.
-        :raises ValueError: for an unknown kind.
+        :param definition: which definition the boundary follows, see
+            BOUNDARY_DEFINITIONS.
+        :param run: 1 for the annotation, 2, 3, … for blind repetitions of it.
+        :param guideline_version: version of the annotation guideline used.
+        :raises ValueError: for an unknown definition or a run below 1.
         """
-        if kind not in BOUNDARY_KINDS:
-            raise ValueError(f"Unbekannte Grenzart {kind!r}; erlaubt: {BOUNDARY_KINDS}")
+        if definition not in BOUNDARY_DEFINITIONS:
+            raise ValueError(
+                f"Unbekannte Grenzdefinition {definition!r}; erlaubt: {BOUNDARY_DEFINITIONS}"
+            )
+        if run < 1:
+            raise ValueError(f"Lauf muss >= 1 sein, war {run}")
         self.ground_truth_data.append({
             "t_ms": t_ms,
             "label": label or "Grenze",
-            "kind": kind,
-            "created_at_utc": datetime.now(timezone.utc).isoformat(),
+            "definition": definition,
+            "run": int(run),
+            "annotated_at": datetime.now(timezone.utc).isoformat(),
+            "guideline_version": guideline_version,
         })
         self.save_ground_truth()
 
     @staticmethod
-    def boundary_kind(entry: dict[str, Any]) -> str:
-        """The definition an entry follows; entries without one are "end"."""
-        return str(entry.get("kind", DEFAULT_BOUNDARY_KIND))
+    def boundary_definition(entry: dict[str, Any]) -> str:
+        """The definition an entry follows, reading the legacy "kind" field too."""
+        if "definition" in entry:
+            return str(entry["definition"])
+        return _LEGACY_KINDS.get(str(entry.get("kind", _LEGACY_DEFAULT)), _LEGACY_DEFAULT)
 
-    def count_boundaries(self, kind: str = DEFAULT_BOUNDARY_KIND) -> int:
-        """How many boundaries of one kind are annotated."""
-        return sum(1 for e in self.ground_truth_data if self.boundary_kind(e) == kind)
+    @staticmethod
+    def boundary_run(entry: dict[str, Any]) -> int:
+        """The annotation run of an entry; entries without one belong to run 1."""
+        try:
+            return int(entry.get("run", 1))
+        except (TypeError, ValueError):
+            return 1
+
+    def _selects(self, entry: dict[str, Any], definition: str, run: int) -> bool:
+        return (self.boundary_definition(entry) == definition
+                and self.boundary_run(entry) == run)
+
+    def count_boundaries(self, definition: str = DEFAULT_DEFINITION, run: int = 1) -> int:
+        """How many boundaries of one definition and run are annotated."""
+        return sum(1 for e in self.ground_truth_data if self._selects(e, definition, run))
+
+    def annotation_runs(self, definition: str = DEFAULT_DEFINITION) -> list[int]:
+        """The runs that hold at least one boundary of this definition, ascending."""
+        return sorted({
+            self.boundary_run(e) for e in self.ground_truth_data
+            if self.boundary_definition(e) == definition
+        })
 
     def set_ground_truth_boundaries(self, boundaries: list[dict[str, Any]]) -> None:
         """
@@ -228,26 +269,29 @@ class RecordingSession:
         self.ground_truth_data = boundaries
         self.save_ground_truth()
 
-    def ground_truth_markers(self, kind: str = DEFAULT_BOUNDARY_KIND) -> list[tuple[float, str]]:
+    def ground_truth_markers(
+        self, definition: str = DEFAULT_DEFINITION, run: int = 1
+    ) -> list[tuple[float, str]]:
         """
-        The boundaries of one definition as (t_ms, label) tuples, the shape the
-        timeline draws.
+        The boundaries of one definition and run as (t_ms, label) tuples, the
+        shape the timeline draws.
 
-        :param kind: which definition, see BOUNDARY_KINDS.
+        :param definition: which definition, see BOUNDARY_DEFINITIONS.
+        :param run: which annotation run.
         :return: markers in chronological order.
         """
         markers = [
             (float(entry.get("t_ms", 0.0)), str(entry.get("label", "Grenze")))
             for entry in self.ground_truth_data
-            if self.boundary_kind(entry) == kind
+            if self._selects(entry, definition, run)
         ]
         return sorted(markers, key=lambda m: m[0])
 
     # ── Clock ────────────────────────────────────────────────────────────
 
     def arm(self, t0_ns: int) -> None:
-        """Fix the shared clock origin every modality is timed against."""
-        self.start_monotonic_ns = t0_ns
+        """Fix the origin: the wall-clock time of the MP4's first frame."""
+        self.start_wallclock_ns = t0_ns
         self._armed = True
 
     @property
@@ -255,8 +299,8 @@ class RecordingSession:
         return self._armed
 
     def session_time_ms(self) -> float:
-        """Milliseconds since t0. Negative before arm()."""
-        return round((time.monotonic_ns() - self.start_monotonic_ns) / 1_000_000, 3)
+        """Milliseconds since t0, on the wall clock ffmpeg stamps the frames with."""
+        return round((time.time_ns() - self.start_wallclock_ns) / 1_000_000, 3)
 
     # ── Paths and metadata ───────────────────────────────────────────────
 
