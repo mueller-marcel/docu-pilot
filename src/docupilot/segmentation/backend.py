@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -76,9 +77,19 @@ def is_available() -> bool:
     return bool(getattr(c, "api_key", None) or getattr(c, "auth_token", None))
 
 
+def now_utc() -> str:
+    """The retrieval stamp written beside every fresh verdict."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
 class JsonVerdictCache:
     """
     A JSON map of cache key -> stored verdict, kept beside the recording.
+
+    Every entry carries the model ID and the retrieval date next to the
+    verdict: temperature 0 is not fully deterministic on API models, so which
+    model answered when is part of the result (C11). Entries written before
+    that are bare verdicts and still read, with empty provenance.
 
     A file that cannot be read, or an entry that does not fit the current
     verdict shape, is a MISS and never a crash: the file is on disk and may
@@ -96,12 +107,26 @@ class JsonVerdictCache:
             except (OSError, json.JSONDecodeError):
                 pass
 
-    def _raw(self, key: str) -> Any:
-        """The stored entry, whatever shape it has; None when absent."""
-        return self._entries.get(key)
+    def _entry(self, key: str) -> dict[str, Any] | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        if isinstance(entry, dict) and "verdict" in entry:
+            return entry
+        return {"verdict": entry, "model": "", "retrieved_at": ""}
 
-    def _store(self, key: str, value: Any) -> None:
-        self._entries[key] = value
+    def _raw(self, key: str) -> Any:
+        """The stored verdict, whatever shape it has; None when absent."""
+        entry = self._entry(key)
+        return None if entry is None else entry["verdict"]
+
+    def provenance(self, key: str) -> tuple[str, str]:
+        """(model, retrieved_at) of an entry; empty strings when unknown."""
+        entry = self._entry(key) or {}
+        return str(entry.get("model", "")), str(entry.get("retrieved_at", ""))
+
+    def _store(self, key: str, value: Any, model: str, retrieved_at: str) -> None:
+        self._entries[key] = {"verdict": value, "model": model, "retrieved_at": retrieved_at}
 
     def flush(self) -> None:
         """Write everything to disk; a failure is ignored — the verdicts are

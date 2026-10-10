@@ -7,13 +7,17 @@ the three modality modules have in common.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 
 import numpy as np
 
-# Sampling grid for modalities without frames of their own (audio, events); video
-# uses its own frame rate. Only sets the quantisation of a reported boundary.
-GRID_HZ = 50.0
+from docupilot.config import GRID_HZ
+
+__all__ = [
+    "BOUNDARY_THRESHOLD", "GRID_HZ", "BoundaryEvidence",
+    "apply_gaussian", "apply_window", "grid",
+]
 
 # At or above this probability a modality commits to a boundary.
 BOUNDARY_THRESHOLD = 0.5
@@ -23,12 +27,18 @@ BOUNDARY_THRESHOLD = 0.5
 class BoundaryEvidence:
     """
     One modality's answer to "where are the action boundaries?": a graded curve
-    for display, and the boundaries the modality commits to.
+    for display and for the rule decider, the boundaries the modality commits
+    to, and — when the modality measures several things — its sub-curves.
+
+    The sub-curves share `times_s`. The trained deciders read them as separate
+    feature blocks; all of them belong to this one modality, so the Shapley
+    decomposition stays one over three players.
     """
 
     times_s: np.ndarray          # (T,) float64 — timestamp per sample
     score: np.ndarray            # (T,) float32 — graded evidence in [0, 1]
     boundaries_s: list[float]
+    channels: Mapping[str, np.ndarray] = field(default_factory=dict)
 
     @classmethod
     def empty(cls) -> BoundaryEvidence:
@@ -37,6 +47,11 @@ class BoundaryEvidence:
             score=np.zeros(0, dtype=np.float32),
             boundaries_s=[],
         )
+
+    def feature_curves(self) -> dict[str, np.ndarray]:
+        """The curves the deciders describe: the sub-curves, or the score when
+        the modality has none."""
+        return dict(self.channels) if self.channels else {"score": self.score}
 
 
 def grid(duration_s: float, hz: float = GRID_HZ) -> np.ndarray:

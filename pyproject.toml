@@ -39,9 +39,6 @@ packages = [{ include = "docupilot", from = "src" }]
 [dependency-groups]
 dev = [
     "ruff>=0.15,<0.16",
-    "pytest>=9.0,<10",
-    # Reads back the generated report to check it is paginated.
-    "pypdf>=5.0,<7.0",
 ]
 
 [build-system]

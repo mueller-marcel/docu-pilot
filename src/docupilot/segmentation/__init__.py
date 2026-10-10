@@ -10,11 +10,15 @@ valid; a single cross-read would make those numbers measure the leak).
     video_scoring.py  the VLM that judges a pair of settled screens
     audio_scoring.py  the LLM that judges a narrated sentence
     backend.py        .env + Anthropic client, shared by the two scoring stages
-    store.py          finished lanes, kept in the session so a re-open is free
+    store.py          raw results and drawn lanes, kept in the session
     pipeline.py       run all three over one session
+
+Each modality has two stages: `extract_raw` (decoding and model calls, cached)
+and `render` (the curve, cheap). Only the second depends on the boundary
+definition and on the parameters calibrated inside an evaluation fold.
 """
 
 from docupilot.segmentation.evidence import BoundaryEvidence
-from docupilot.segmentation.pipeline import MODALITIES, segment
+from docupilot.segmentation.pipeline import MODALITIES, extract_raws, render, segment
 
-__all__ = ["MODALITIES", "BoundaryEvidence", "segment"]
+__all__ = ["MODALITIES", "BoundaryEvidence", "extract_raws", "render", "segment"]

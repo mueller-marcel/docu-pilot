@@ -1,18 +1,48 @@
 """
-Action boundaries from events.json alone: input bursts, graded by the rest after
-them. Opens exactly one file, so the modality stays independent for the ablation.
+Action boundaries from events.json alone. Opens exactly one file, so the
+modality stays independent for the ablation.
+
+Two stages, so that calibrating a parameter never re-reads anything (C8):
+
+    extract_raw(session)   the input bursts, each with its class histogram and
+                           whether it was completed — fold-independent
+    render(raw, ...)       three sub-curves drawn at the burst starts — cheap
+
+The sub-curves (C14), all placed at the FIRST event of a burst because the
+annotation marks the beginning of the next step:
+
+    rest          how long the user was idle before the burst
+    completion    the previous burst ended with a completion key (Enter,
+                  Ctrl+Enter, Ctrl+S) not followed by an abort key (Esc,
+                  Ctrl+Z) — the chunking signal of Rebmann & van der Aa
+    class_change  1 − cosine similarity of the class histograms of the
+                  previous and this burst — a simplified context switch
+
+UI labels are not recorded, so completion is approximated by key classes and a
+click carries no completion information — a stated limit of the modality.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections import Counter
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
+from docupilot.config import (
+    DOUBLE_CLICK_S,
+    EVENT_CHANNEL_WEIGHTS,
+    GRID_HZ,
+    KEY_CLASSES,
+    MODIFIER_KEYS,
+    FoldParams,
+    Settings,
+)
 from docupilot.recording.session import RecordingSession
 from docupilot.segmentation.evidence import (
     BOUNDARY_THRESHOLD,
-    GRID_HZ,
     BoundaryEvidence,
     apply_gaussian,
     grid,
@@ -20,95 +50,289 @@ from docupilot.segmentation.evidence import (
 
 MODALITY = "events"
 
-# Pauses >= this separate two bursts (Wengelin 2006 — imported, not fitted).
-_BURST_PAUSE_S = 2.0
+CHANNELS: tuple[str, ...] = ("rest", "completion", "class_change")
 
-# Rest length at which the score saturates.
-# PROVISIONAL: no literature value, the only free parameter here. Calibrate on a
-# dev split, never on the evaluation set.
-_REST_FULL_S = 8.0
+# Action type × key class. Releases and modifier keys are no action of their own.
+EVENT_CLASSES: tuple[str, ...] = (
+    "key:character", "key:navigation", "key:completion", "key:abort", "key:shortcut",
+    "mouse:click", "mouse:double_click", "mouse:right_click", "mouse:scroll",
+)
 
-_SPREAD_S = 1.0
-
-# Lets the log state its own length; taking it from the video would make the last
-# burst's score depend on another modality.
+# The recorder's own lifecycle events that state how long the log ran; taking
+# the length from the video would make the last burst depend on another modality.
+_START_EVENT = "recording_started"
 _END_EVENT_TYPES = frozenset({"recording_stopped", "av_stopped", "input_stopped"})
 
+_KEY_TO_CLASS: dict[str, str] = {
+    key: group for group, keys in KEY_CLASSES.items() for key in keys
+}
+_KEY_TO_MODIFIER: dict[str, str] = {
+    key: group for group, keys in MODIFIER_KEYS.items() for key in keys
+}
+# Held modifiers that turn a key into a shortcut; Shift only changes the
+# character, AltGr types one.
+_SHORTCUT_MODIFIERS = ("ctrl", "alt", "cmd")
 
-def input_markers(session: RecordingSession) -> list[tuple[float, str]]:
-    """Every recorded user input as (t_ms, type), chronologically."""
-    markers = [
-        (float(ev.get("t_ms", 0.0)), str(ev.get("type", "")))
-        for ev in session.input_events()
-    ]
-    markers.sort(key=lambda m: m[0])
-    return markers
+
+@dataclass(frozen=True)
+class Burst:
+    """A run of input events without a pause longer than the burst pause."""
+
+    start_s: float
+    end_s: float
+    classes: dict[str, int]
+    completed: bool
 
 
-def _log_duration_s(session: RecordingSession) -> float:
+@dataclass(frozen=True)
+class EventsRaw:
+    """Everything the curves are drawn from; no label and no parameter of a fold."""
+
+    bursts: list[Burst]
+    log_start_s: float
+    log_end_s: float
+    unknown_keys: dict[str, int] = field(default_factory=dict)
+
+
+# ── Classification ────────────────────────────────────────────────────────────
+
+def _key_name(key: str, held: set[str]) -> tuple[str, bool]:
     """
-    How long the recording ran, according to the event log itself. Falls back to
-    the last event of any kind when no lifecycle event is present.
+    The key as the class table spells it, and whether a shortcut modifier was
+    held. A control character (Windows reports Ctrl+S as '\\x13') is read back
+    as its letter with Ctrl.
     """
-    events = session.read_events()
-    if not events:
-        return 0.0
-    ends = [
-        float(ev.get("t_ms", 0.0))
-        for ev in events
-        if ev.get("type") in _END_EVENT_TYPES
-    ]
-    return max(ends or [float(ev.get("t_ms", 0.0)) for ev in events]) / 1000.0
+    prefix = [m for m in _SHORTCUT_MODIFIERS if m in held and "alt_gr" not in held]
+    if len(key) == 1 and ord(key) < 32:
+        key = chr(ord(key) + 96)
+        if "ctrl" not in prefix:
+            prefix.insert(0, "ctrl")
+    if prefix and len(key) == 1:
+        key = key.lower()
+    return "+".join([*prefix, key]), bool(prefix)
 
 
-def _bursts(times_s: list[float]) -> list[tuple[float, float]]:
-    """Group input times into (start, end) bursts, split at _BURST_PAUSE_S."""
-    if not times_s:
+def classify_key(key: str, held: set[str], unknown: Counter[str]) -> str:
+    """The class of one key press; an unlisted key counts as unknown."""
+    name, modified = _key_name(key, held)
+    if name in _KEY_TO_CLASS:
+        return _KEY_TO_CLASS[name]
+    if not modified and len(name) == 1 and name.isprintable():
+        return "character"
+    if not modified:
+        unknown[name] += 1
+    return "shortcut"
+
+
+def classify(events: Sequence[dict[str, Any]]) -> tuple[list[tuple[float, str | None]], dict[str, int]]:
+    """
+    Every input event as (t_s, class), chronologically; the class is None for
+    events that are no action of their own (releases, modifier keys).
+
+    :return: the classified events and the count of every unknown key.
+    """
+    held: set[str] = set()
+    unknown: Counter[str] = Counter()
+    last_left_click = -np.inf
+    out: list[tuple[float, str | None]] = []
+
+    for event in sorted(events, key=lambda e: float(e.get("t_ms", 0.0))):
+        t_s = float(event.get("t_ms", 0.0)) / 1000.0
+        kind = event.get("type")
+        cls: str | None = None
+        if kind in ("key_press", "key_release"):
+            key = str(event.get("key", ""))
+            modifier = _KEY_TO_MODIFIER.get(key)
+            if modifier is not None:
+                (held.add if kind == "key_press" else held.discard)(modifier)
+            elif kind == "key_press":
+                cls = "key:" + classify_key(key, held, unknown)
+        elif kind == "mouse_click" and event.get("pressed", True):
+            button = str(event.get("button", ""))
+            if button.endswith("right"):
+                cls = "mouse:right_click"
+            elif button.endswith("left") and t_s - last_left_click <= DOUBLE_CLICK_S:
+                cls = "mouse:double_click"
+                last_left_click = -np.inf
+            else:
+                cls = "mouse:click"
+                if button.endswith("left"):
+                    last_left_click = t_s
+        elif kind == "mouse_scroll":
+            cls = "mouse:scroll"
+        out.append((t_s, cls))
+    return out, dict(unknown)
+
+
+def split_into_bursts(times_s: Sequence[float], pause_s: float) -> list[tuple[int, int]]:
+    """
+    Index ranges [first, last] of the bursts: a new burst starts when the gap
+    to the previous event is longer than `pause_s` (strictly greater).
+    """
+    if not len(times_s):
         return []
-    out: list[tuple[float, float]] = []
-    start = prev = times_s[0]
-    for t in times_s[1:]:
-        if t - prev > _BURST_PAUSE_S:
-            out.append((start, prev))
-            start = t
-        prev = t
-    out.append((start, prev))
+    out: list[tuple[int, int]] = []
+    first = 0
+    for i in range(1, len(times_s)):
+        if times_s[i] - times_s[i - 1] > pause_s:
+            out.append((first, i - 1))
+            first = i
+    out.append((first, len(times_s) - 1))
     return out
 
 
-def extract(
+def _completed(classes_in_order: Sequence[str]) -> bool:
+    """A completion key, and no abort key after the last one."""
+    last_completion = max(
+        (i for i, c in enumerate(classes_in_order) if c == "key:completion"), default=-1
+    )
+    if last_completion < 0:
+        return False
+    return "key:abort" not in classes_in_order[last_completion + 1:]
+
+
+def bursts_from_events(events: Sequence[dict[str, Any]], pause_s: float) -> tuple[list[Burst], dict[str, int]]:
+    """Group input events into bursts with their class histogram and completion."""
+    classified, unknown = classify(events)
+    times = [t for t, _ in classified]
+    bursts = []
+    for first, last in split_into_bursts(times, pause_s):
+        classes = [c for _, c in classified[first:last + 1] if c is not None]
+        bursts.append(Burst(
+            start_s=times[first],
+            end_s=times[last],
+            classes=dict(Counter(classes)),
+            completed=_completed(classes),
+        ))
+    return bursts, unknown
+
+
+# ── Stage 1: raw ──────────────────────────────────────────────────────────────
+
+def raw_key(settings: Settings) -> str:
+    """Everything a raw result depends on besides the recording."""
+    return f"burst_pause={settings.burst_pause_s}|double_click={DOUBLE_CLICK_S}"
+
+
+def _log_bounds_s(events: Sequence[dict[str, Any]]) -> tuple[float, float]:
+    """
+    When the log started and stopped, by its own lifecycle events. Without a
+    start event the clock origin is used; without a stop event the last event.
+    """
+    if not events:
+        return 0.0, 0.0
+    starts = [float(e.get("t_ms", 0.0)) for e in events if e.get("type") == _START_EVENT]
+    ends = [float(e.get("t_ms", 0.0)) for e in events if e.get("type") in _END_EVENT_TYPES]
+    start = min(starts) / 1000.0 if starts else 0.0
+    end = max(ends or [float(e.get("t_ms", 0.0)) for e in events]) / 1000.0
+    return max(start, 0.0), end
+
+
+def extract_raw(
     session: RecordingSession,
+    settings: Settings | None = None,
     *,
     use_cache: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+) -> EventsRaw:
+    """
+    The bursts of the event log. Parsing one JSON file is cheaper than any
+    cache, so `use_cache` and the callbacks — the shared extractor contract —
+    are unused here.
+
+    :param settings: supplies the burst pause (a priori 2.0 s, C12 sensitivity).
+    """
+    settings = settings or Settings()
+    log = session.read_events()
+    log_start, log_end = _log_bounds_s(log)
+    bursts, unknown = bursts_from_events(session.input_events_of(log), settings.burst_pause_s)
+    return EventsRaw(bursts=bursts, log_start_s=log_start, log_end_s=log_end,
+                     unknown_keys=unknown)
+
+
+# ── Stage 2: render ───────────────────────────────────────────────────────────
+
+def _cosine(a: dict[str, int], b: dict[str, int]) -> float | None:
+    va = np.array([a.get(c, 0) for c in EVENT_CLASSES], dtype=np.float64)
+    vb = np.array([b.get(c, 0) for c in EVENT_CLASSES], dtype=np.float64)
+    na, nb = np.linalg.norm(va), np.linalg.norm(vb)
+    if na == 0 or nb == 0:
+        return None
+    return float(va @ vb / (na * nb))
+
+
+def transitions(
+    raw: EventsRaw, rest_full_s: float, definition: str = "begin"
+) -> list[tuple[float, dict[str, float]]]:
+    """
+    One (position, sub-curve heights) per burst transition.
+
+    "begin": at the first event of burst k, describing the step from k−1 to k;
+    the first burst's rest is measured from the start of the log.
+    "end" (sensitivity only): at the last event of burst k, describing the step
+    from k to k+1; the last burst's rest runs to the end of the log.
+    """
+    bursts = raw.bursts
+    out: list[tuple[float, dict[str, float]]] = []
+    for k, burst in enumerate(bursts):
+        if definition == "begin":
+            before = bursts[k - 1] if k > 0 else None
+            after = burst
+            position = burst.start_s
+            rest = burst.start_s - (before.end_s if before else raw.log_start_s)
+        else:
+            before = burst
+            after = bursts[k + 1] if k + 1 < len(bursts) else None
+            position = burst.end_s
+            rest = (after.start_s if after else raw.log_end_s) - burst.end_s
+        similarity = (
+            _cosine(before.classes, after.classes) if before is not None and after is not None
+            else None
+        )
+        out.append((position, {
+            "rest": min(max(rest, 0.0) / rest_full_s, 1.0),
+            "completion": 1.0 if before is not None and before.completed else 0.0,
+            "class_change": 0.0 if similarity is None else 1.0 - similarity,
+        }))
+    return out
+
+
+def channel_names(settings: Settings) -> tuple[str, ...]:
+    """The sub-curves a run uses: all three, or only the rest (C14 sensitivity)."""
+    return CHANNELS if settings.event_channels == "all" else ("rest",)
+
+
+def render(
+    raw: EventsRaw, settings: Settings | None = None, params: FoldParams | None = None
 ) -> BoundaryEvidence:
     """
-    Action boundaries from the event log alone: each input burst is one candidate
-    on its LAST event, scored `min(pause_after / _REST_FULL_S, 1)`.
+    Draw the bursts onto the sub-curves.
 
-    The keyword arguments are the shared extractor contract and unused here.
+    The displayed score — and what the rule decider reads — is the weighted
+    maximum of the sub-curves (1 : 1 : 0.5, a priori). A boundary is committed
+    where it reaches BOUNDARY_THRESHOLD.
 
-    :param session: session whose .events_path points at events.json.
+    :param params: supplies REST_FULL_S, calibrated in-fold.
     """
-    markers = input_markers(session)
-    duration_s = _log_duration_s(session)
-    times_s = grid(duration_s)
-    if not markers or len(times_s) == 0:
+    settings = settings or Settings()
+    params = params or FoldParams()
+    times_s = grid(raw.log_end_s)
+    if not raw.bursts or len(times_s) == 0:
         return BoundaryEvidence.empty()
 
-    score = np.zeros(len(times_s), dtype=np.float32)
-    spread = max(1, int(_SPREAD_S * GRID_HZ))
-
-    bursts = _bursts([t_ms / 1000.0 for t_ms, _ in markers])
-    next_starts = [start for start, _ in bursts[1:]] + [duration_s]
+    names = channel_names(settings)
+    curves = {name: np.zeros(len(times_s), dtype=np.float32) for name in names}
+    spread = max(1, int(settings.spread_s * GRID_HZ))
 
     boundaries_s: list[float] = []
-    for (_, end_s), next_start_s in zip(bursts, next_starts):
-        value = min(max(next_start_s - end_s, 0.0) / _REST_FULL_S, 1.0)
-        center = min(max(int(round(end_s * GRID_HZ)), 0), len(times_s) - 1)
-        apply_gaussian(score, center, value, spread)
-        if value >= BOUNDARY_THRESHOLD:
-            boundaries_s.append(float(times_s[center]))
+    for position, heights in transitions(raw, params.rest_full_s, settings.boundary_definition):
+        center = min(max(int(round(position * GRID_HZ)), 0), len(times_s) - 1)
+        for name in names:
+            apply_gaussian(curves[name], center, heights[name], spread)
+        combined = max(EVENT_CHANNEL_WEIGHTS[n] * heights[n] for n in names)
+        if combined >= BOUNDARY_THRESHOLD:
+            boundaries_s.append(float(position))
 
-    return BoundaryEvidence(times_s, score, boundaries_s)
+    score = np.max([EVENT_CHANNEL_WEIGHTS[n] * curves[n] for n in names], axis=0)
+    return BoundaryEvidence(times_s, score.astype(np.float32), boundaries_s, channels=curves)

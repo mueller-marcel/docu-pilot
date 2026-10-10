@@ -15,17 +15,26 @@ from PySide6.QtWidgets import (
 from docupilot.recording.session import RecordingSession
 from docupilot.ui.formatting import format_ms
 
+_DEFINITION_TEXT = {"begin": "Beginn", "end": "Ende  "}
+
 
 class BoundaryDialog(QDialog):
-    """Dialog zum Anzeigen und Löschen gesetzter Ground-Truth-Grenzen."""
+    """
+    Dialog zum Anzeigen und Löschen gesetzter Ground-Truth-Grenzen EINES Laufs.
 
-    def __init__(self, boundaries: list[dict], parent: QWidget | None = None) -> None:
+    Die Grenzen anderer Läufe werden weder angezeigt noch verändert: Eine
+    Wiederholungsannotation muss blind bleiben, sonst misst der Retest nur,
+    wie gut der erste Lauf abgeschrieben wurde.
+    """
+
+    def __init__(self, boundaries: list[dict], run: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Gesetzte Grenzen")
-        self.setMinimumSize(420, 320)
+        self.setWindowTitle(f"Gesetzte Grenzen · Lauf {run}")
+        self.setMinimumSize(460, 320)
         self.setModal(True)
 
-        self._boundaries = list(boundaries)
+        self._all = list(boundaries)
+        self._run = run
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -68,14 +77,23 @@ class BoundaryDialog(QDialog):
 
         self._refresh_list()
 
+    def _visible(self) -> list[int]:
+        """Indices into the full list of the entries of this run, by time."""
+        indices = [i for i, b in enumerate(self._all)
+                   if RecordingSession.boundary_run(b) == self._run]
+        return sorted(indices, key=lambda i: float(self._all[i].get("t_ms", 0.0)))
+
     def _refresh_list(self) -> None:
-        self._header.setText(f"{len(self._boundaries)} Grenze(n) gesetzt")
+        visible = self._visible()
+        self._header.setText(f"{len(visible)} Grenze(n) in Lauf {self._run}")
         self._list.clear()
-        for i, b in enumerate(self._boundaries):
-            t_ms = b.get("t_ms", 0.0)
-            created = b.get("created_at_utc", "")[:19].replace("T", "  ")
-            kind = "Beginn" if RecordingSession.boundary_kind(b) == "start" else "Ende  "
-            item = QListWidgetItem(f"#{i + 1}   {kind}   {format_ms(t_ms)}   —   {created} UTC")
+        for n, i in enumerate(visible, start=1):
+            b = self._all[i]
+            stamp = str(b.get("annotated_at", b.get("created_at_utc", "")))[:19].replace("T", "  ")
+            definition = _DEFINITION_TEXT.get(RecordingSession.boundary_definition(b), "?")
+            item = QListWidgetItem(
+                f"#{n}   {definition}   {format_ms(float(b.get('t_ms', 0.0)))}   —   {stamp} UTC"
+            )
             item.setData(Qt.ItemDataRole.UserRole, i)
             self._list.addItem(item)
 
@@ -84,8 +102,9 @@ class BoundaryDialog(QDialog):
         if not selected:
             return
         for idx in sorted({item.data(Qt.ItemDataRole.UserRole) for item in selected}, reverse=True):
-            self._boundaries.pop(idx)
+            self._all.pop(idx)
         self._refresh_list()
 
     def get_boundaries(self) -> list[dict]:
-        return self._boundaries
+        """All boundaries of all runs, with this run's deletions applied."""
+        return self._all

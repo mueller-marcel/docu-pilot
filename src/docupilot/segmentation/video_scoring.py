@@ -13,7 +13,7 @@ import hashlib
 import json
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -135,6 +135,8 @@ class Judgement:
     p_boundary: float   # graded evidence in [0, 1]
     reason: str = ""    # the model's own observation — keep it: it is how you
                         # tell "saw nothing, guessed a label" from a real read
+    model: str = ""         # which model answered — empty for legacy cache entries
+    retrieved_at: str = ""  # when it answered (UTC, ISO)
 
 
 # The one boundary decision rule lives downstream (BOUNDARY_THRESHOLD on
@@ -339,19 +341,24 @@ class Cache(backend.JsonVerdictCache):
         e = self._raw(key)
         if not isinstance(e, dict):
             return None
+        model, retrieved_at = self.provenance(key)
         try:
             return Judgement(
                 category=str(e["category"]),
                 p_boundary=float(e["p_boundary"]),
                 reason=str(e.get("reason", "")),
+                model=model,
+                retrieved_at=retrieved_at,
             )
         except (KeyError, TypeError, ValueError):
             return None
 
     def put(self, key: str, j: Judgement) -> None:
-        self._store(key, {
-            "category": j.category, "p_boundary": j.p_boundary, "reason": j.reason
-        })
+        self._store(
+            key,
+            {"category": j.category, "p_boundary": j.p_boundary, "reason": j.reason},
+            model=j.model, retrieved_at=j.retrieved_at,
+        )
 
 
 def judge(composite: bytes, cache: Cache | None = None,
@@ -369,6 +376,8 @@ def judge(composite: bytes, cache: Cache | None = None,
             return hit
 
     result = parse(ask(composite, model))
-    if result is not None and cache is not None:
-        cache.put(key, result)
+    if result is not None:
+        result = replace(result, model=model, retrieved_at=backend.now_utc())
+        if cache is not None:
+            cache.put(key, result)
     return result

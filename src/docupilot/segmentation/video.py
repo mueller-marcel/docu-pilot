@@ -5,10 +5,16 @@ an ANCHOR holding the last established one.
 
 Reads only the video stream, so the modality stays independent for the ablation.
 
+Two stages (C8):
+
+    extract_raw(session)   activity scan + one verdict per judged dwell —
+                           expensive, cached, independent of the definition
+    render(raw, settings)  where each verdict is drawn — cheap
+
 The module is layered so the decisions are separable from the decoding: the
 activity signal is a function of a frame SEQUENCE, the dwell segmentation a
 function of that signal, and the anchor walk a function of the dwells plus two
-callables. Only `_scan`, `_read_frames` and `_frame_times_s` touch OpenCV and
+callables. Only `_scan`, `_read_frames` and `_ffprobe_times_s` touch OpenCV and
 ffprobe.
 """
 
@@ -20,6 +26,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from docupilot.config import FoldParams, Settings
 from docupilot.recording.session import RecordingSession
 from docupilot.segmentation import store
 from docupilot.segmentation.evidence import (
@@ -34,31 +41,31 @@ MODALITY = "video"
 _PHASH_SIZE = 8
 _ACTIVITY_GRID = 8
 
-# Swept on the development session (session_30) for the cheapest setting at full
-# recall. A missed action is unrecoverable — the VLM never sees it. Recall here,
-# precision in the VLM.
-ACTIVITY_QUIET = 0.08    # per-tile pHash distance below which a frame is "still"
-_MIN_DWELL_S = 0.5       # a still run this long is a settled state
+# FROZEN (C8). They decide the dwells and therefore the VLM calls, so tuning
+# them in-fold is not affordable. The values are set and frozen; a sensitivity
+# run exists only on a sub-corpus.
+ACTIVITY_QUIET = Settings().activity_quiet   # per-tile pHash distance below which a frame is "still"
+_MIN_DWELL_S = 0.5                           # a still run this long is a settled state
 
-# How far INTO a dwell the frame shown to the model is sampled; the first still
-# frame can still show a fading animation.
+# SET, not tuned. How far INTO a dwell the frame shown to the model is sampled;
+# the first still frame can still show a fading animation.
 _SETTLE_OFFSET_S = 0.2
 
-# Mean grey-level difference above which a tile counts as changed, for the
-# Set-of-Mark box only. Not tuned — the box only has to point, not to decide.
+# SET, not tuned. Mean grey-level difference above which a tile counts as
+# changed, for the Set-of-Mark box only — the box only has to point.
 _PIXEL_CHANGE_EPS = 1.0
 
-_SPREAD_S = 1.0
-
-# Budget cap: a flickering recording could fragment into thousands of dwells.
+# TECHNICAL. Budget cap: a flickering recording could fragment into thousands of
+# dwells. Whether it was hit is reported per session.
 _MAX_CALLS = 400
 
-# The activity scan is the expensive, model-free half of this modality and is
-# also what the synchronisation report reads. It is a pure function of the
-# recording bytes and these two constants, so it is kept beside the recording
-# and read back instead of decoding every frame again.
-_ACTIVITY_FILE = "video_activity.npz"
+# The activity scan is the expensive, model-free half of this modality. It is a pure function of the
+# recording bytes and these two constants, so it is kept beside the recording.
+ACTIVITY_FILE = "video_activity.npz"
 _ACTIVITY_FORMAT = 1
+
+# What the VLM said about each frame pair, kept beside the recording.
+VERDICT_CACHE_FILE = "gui_vlm_cache.json"
 
 Region = tuple[float, float, float, float]
 
@@ -70,15 +77,29 @@ class ActivityScan:
     n_frames: int
     activity: np.ndarray     # (n_frames,) float32 — largest per-tile pHash distance to the previous frame
     fps: float
-    times_s: np.ndarray      # (n_frames,) float64 — capture time of each frame, first frame = 0
+    times_s: np.ndarray      # (n_frames,) float64 — presentation time of each frame, session clock
 
 
 @dataclass(frozen=True)
 class DwellVerdict:
-    """What the model said about one dwell, and where that dwell begins."""
+    """What the model said about one dwell, and where that dwell lies."""
 
-    dwell_start: int         # frame index the screen settled at — where the evidence goes
+    dwell_start: int         # frame index the screen settled at
+    dwell_end: int           # last still frame of the dwell
     judgement: Judgement
+
+
+@dataclass(frozen=True)
+class VideoRaw:
+    """Everything the curve is drawn from; nothing here depends on a definition."""
+
+    times_s: np.ndarray
+    activity: np.ndarray
+    fps: float
+    quiet: float
+    verdicts: list[DwellVerdict]
+    calls: int
+    limit_hit: bool
 
 
 # ── Activity signal ───────────────────────────────────────────────────────────
@@ -120,9 +141,6 @@ def frame_activity(gray_frames: Iterable[np.ndarray]) -> np.ndarray:
     small region (one cell recoloured, an arrow appearing in a header) and would
     average away; the MAXIMUM over tiles rather than the mean for the same
     reason. The first frame has no predecessor and scores 0.
-
-    Consumes the frames one at a time, so only two frames' hashes are alive at
-    once rather than one 64-hash tuple per frame of the whole recording.
 
     :param gray_frames: the frames, in order.
     :return: (n_frames,) float32.
@@ -170,6 +188,13 @@ def settled_frames(dwell_list: Sequence[tuple[int, int]], fps: float) -> list[in
     return [min(end, start + offset) for start, end in dwell_list]
 
 
+def first_active_frame_after(activity: np.ndarray, frame: int, quiet: float) -> int | None:
+    """The first frame after `frame` whose activity reaches `quiet`; None when
+    the screen never moves again."""
+    later = np.flatnonzero(activity[frame + 1:] >= quiet)
+    return None if len(later) == 0 else int(frame + 1 + later[0])
+
+
 # ── Changed region (the Set-of-Mark hint) ─────────────────────────────────────
 
 def _gray16(bgr: np.ndarray) -> np.ndarray:
@@ -205,7 +230,7 @@ def changed_region(a: np.ndarray, b: np.ndarray) -> Region | None:
 # ── The anchor walk: the modality's actual decision logic ─────────────────────
 
 def walk_dwells(
-    steps: Sequence[tuple[int, int]],
+    steps: Sequence[tuple[int, int, int]],
     has_change: Callable[[int, int], bool],
     judge: Callable[[int, int], Judgement | None],
     *,
@@ -228,8 +253,8 @@ def walk_dwells(
 
     Setting a boundary and advancing the anchor are therefore ONE decision.
 
-    :param steps: (dwell_start_frame, settled_frame) per dwell, in order. The
-        first settled frame becomes the initial anchor and is never judged.
+    :param steps: (dwell_start, dwell_end, settled_frame) per dwell, in order.
+        The first settled frame becomes the initial anchor and is never judged.
     :param has_change: (anchor, current) -> is there anything to compare at all.
         A False costs no model call, which is why it is separate from `judge`.
     :param judge: (anchor, current) -> the verdict, or None when the model gave
@@ -245,7 +270,7 @@ def walk_dwells(
     anchor: int | None = None
     calls = 0
 
-    for dwell_start, current in steps:
+    for dwell_start, dwell_end, current in steps:
         if anchor is None:                       # the workflow's starting point
             anchor = current
             continue
@@ -265,7 +290,7 @@ def walk_dwells(
         if judgement is None:
             continue
 
-        verdicts.append(DwellVerdict(dwell_start, judgement))
+        verdicts.append(DwellVerdict(dwell_start, dwell_end, judgement))
         if judgement.p_boundary >= threshold:
             anchor = current
 
@@ -274,25 +299,61 @@ def walk_dwells(
 
 def evidence_from_verdicts(
     verdicts: Sequence[DwellVerdict],
+    activity: np.ndarray,
     times_s: np.ndarray,
     fps: float,
+    *,
+    quiet: float = ACTIVITY_QUIET,
+    definition: str = "begin",
+    spread_s: float = 1.0,
     threshold: float = BOUNDARY_THRESHOLD,
 ) -> BoundaryEvidence:
     """
     Draw the verdicts onto the score curve.
 
-    The peak goes at the dwell's BEGINNING, not at the frame the model saw: the
-    dwell begins when the screen settles, and that is the instant the annotation
-    means. The sampled frame is only what the model was shown.
+    What is judged is unchanged: the settled state of a dwell against the
+    anchor, "has an operation been completed since the last established
+    state?". Only WHERE the answer is drawn depends on the definition:
+
+    "begin": at the first frame after the dwell that moves again — the next
+        visible activity, where the next step begins. A dwell after which the
+        screen never moves again has no next step and gets no evidence.
+    "end" (sensitivity only): at the dwell's first frame, the instant the
+        result settled.
+
+    The cursor is not in the video, so under "begin" the evidence arrives with
+    the first SCREEN change and may trail an annotation that saw a cursor move
+    or a click. That lag is deliberately not calibrated away — the window
+    features absorb it.
     """
     score = np.zeros(len(times_s), dtype=np.float32)
-    spread = max(1, int(_SPREAD_S * fps))
+    spread = max(1, int(spread_s * fps))
     boundaries_s: list[float] = []
     for verdict in verdicts:
-        apply_gaussian(score, verdict.dwell_start, verdict.judgement.p_boundary, spread)
-        if verdict.judgement.p_boundary >= threshold:
-            boundaries_s.append(float(times_s[verdict.dwell_start]))
+        if definition == "begin":
+            frame = first_active_frame_after(activity, verdict.dwell_end, quiet)
+            if frame is None:
+                continue
+        else:
+            frame = verdict.dwell_start
+        p = verdict.judgement.p_boundary
+        apply_gaussian(score, frame, p, spread)
+        if p >= threshold:
+            boundaries_s.append(float(times_s[frame]))
     return BoundaryEvidence(times_s, score, boundaries_s)
+
+
+def render(
+    raw: VideoRaw, settings: Settings | None = None, params: FoldParams | None = None
+) -> BoundaryEvidence:
+    """The curve of a raw result; the video has no in-fold parameter."""
+    settings = settings or Settings()
+    return evidence_from_verdicts(
+        raw.verdicts, raw.activity, raw.times_s, raw.fps,
+        quiet=raw.quiet,
+        definition=settings.boundary_definition,
+        spread_s=settings.spread_s,
+    )
 
 
 # ── Decoding (the only part that touches OpenCV and ffprobe) ──────────────────
@@ -315,17 +376,8 @@ def parse_frame_times(csv_text: str, n_frames: int) -> np.ndarray:
     return t - t[0] if len(t) else t
 
 
-def _frame_times_s(video_path: str, n_frames: int) -> np.ndarray:
-    """
-    Real capture time of each frame in seconds, read straight from the MP4.
-
-    The recorder encodes with ffmpeg's wall clock at read time (VFR), so a frame's
-    presentation time is essentially its capture time. Events run on
-    time.monotonic() zeroed at arm(); the two share an origin to within the pipe
-    start-up latency (~40 ms measured, see evaluation.synchronization), not
-    exactly. ffprobe reads the times from the container (unlike OpenCV's POS_MSEC,
-    which some builds derive from an assumed rate).
-    """
+def _ffprobe_times_s(video_path: str, n_frames: int) -> np.ndarray:
+    """The container's presentation time of each frame, read straight from the MP4."""
     import subprocess
 
     out = subprocess.run(
@@ -392,12 +444,9 @@ def _read_frames(video_path: str, wanted: set[int]) -> dict[int, np.ndarray]:
     return frames
 
 
-def _activity_key(session: RecordingSession) -> str:
-    """What the stored scan depends on: the recording bytes and the grid."""
-    return (
-        f"{_ACTIVITY_FORMAT}|{store.file_digest(session.recording_path)}"
-        f"|{_PHASH_SIZE}|{_ACTIVITY_GRID}"
-    )
+# What a stored scan depends on besides the recording, which is never edited: a
+# scan taken on another grid would be read against the wrong threshold.
+_ACTIVITY_KEY = f"{_ACTIVITY_FORMAT}|{_PHASH_SIZE}|{_ACTIVITY_GRID}"
 
 
 def scan_activity(session: RecordingSession, use_cache: bool = True) -> ActivityScan:
@@ -408,59 +457,119 @@ def scan_activity(session: RecordingSession, use_cache: bool = True) -> Activity
     :param session: the recording; its .recording_path points at the MP4.
     :param use_cache: read a stored scan and store a fresh one. False decodes
         and stores nothing.
-    :raises RuntimeError: when the frame times cannot be read (see parse_frame_times).
+    :raises RuntimeError: when the frame times cannot be read (see
+        parse_frame_times).
     """
-    path = session.session_dir / _ACTIVITY_FILE
-    key = _activity_key(session) if use_cache else None
+    path = session.session_dir / ACTIVITY_FILE
+    key = _ACTIVITY_KEY if use_cache else None
 
+    loaded: tuple[int, np.ndarray, float, np.ndarray] | None = None
     if key is not None and path.exists():
         try:
             with np.load(path, allow_pickle=False) as data:
                 if str(data["key"]) == key:
-                    return ActivityScan(
-                        n_frames=int(data["n_frames"]),
-                        activity=np.asarray(data["activity"], dtype=np.float32),
-                        fps=float(data["fps"]),
-                        times_s=np.asarray(data["times_s"], dtype=np.float64),
+                    loaded = (
+                        int(data["n_frames"]),
+                        np.asarray(data["activity"], dtype=np.float32),
+                        float(data["fps"]),
+                        np.asarray(data["times_s"], dtype=np.float64),
                     )
         except Exception:                # noqa: BLE001 — a stale or damaged file is a miss
-            pass
+            loaded = None
 
-    video_path = str(session.recording_path)
-    n_frames, activity, fps = _scan(video_path)
-    times_s = _frame_times_s(video_path, n_frames)
-    scan = ActivityScan(n_frames=n_frames, activity=activity, fps=fps, times_s=times_s)
+    if loaded is None:
+        video_path = str(session.recording_path)
+        n_frames, activity, fps = _scan(video_path)
+        times_s = _ffprobe_times_s(video_path, n_frames)
+        if key is not None:
+            store.write_npz(path, key=np.array(key), n_frames=np.array(n_frames),
+                            activity=activity, fps=np.array(fps), times_s=times_s)
+    else:
+        n_frames, activity, fps, times_s = loaded
 
-    if key is not None:
-        store.write_npz(path, key=np.array(key), n_frames=np.array(n_frames),
-                        activity=activity, fps=np.array(fps), times_s=times_s)
-    return scan
+    return ActivityScan(n_frames=n_frames, activity=activity, fps=fps, times_s=times_s)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Stage 1: raw ──────────────────────────────────────────────────────────────
 
-def extract(
+def raw_key(settings: Settings) -> str:
+    """Everything a raw result depends on besides the recording."""
+    from docupilot.segmentation import video_scoring as vlm
+
+    return "|".join(str(v) for v in (
+        _ACTIVITY_KEY, settings.activity_quiet, _MIN_DWELL_S, _SETTLE_OFFSET_S,
+        _PIXEL_CHANGE_EPS, _MAX_CALLS, vlm.MODEL, vlm.PROMPT_VERSION,
+    ))
+
+
+def _to_payload(verdicts: Sequence[DwellVerdict], calls: int, limit_hit: bool) -> dict:
+    return {
+        "calls": calls,
+        "limit_hit": limit_hit,
+        "verdicts": [
+            {"start": v.dwell_start, "end": v.dwell_end, "category": v.judgement.category,
+             "p": v.judgement.p_boundary, "reason": v.judgement.reason,
+             "model": v.judgement.model, "retrieved_at": v.judgement.retrieved_at}
+            for v in verdicts
+        ],
+    }
+
+
+def _from_payload(payload: dict) -> tuple[list[DwellVerdict], int, bool]:
+    verdicts = [
+        DwellVerdict(int(v["start"]), int(v["end"]), Judgement(
+            category=str(v["category"]), p_boundary=float(v["p"]),
+            reason=str(v.get("reason", "")), model=str(v.get("model", "")),
+            retrieved_at=str(v.get("retrieved_at", "")),
+        ))
+        for v in payload["verdicts"]
+    ]
+    return verdicts, int(payload["calls"]), bool(payload["limit_hit"])
+
+
+def extract_raw(
     session: RecordingSession,
+    settings: Settings | None = None,
     *,
     use_cache: bool = True,
     on_progress: Callable[[int, int], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
-) -> BoundaryEvidence:
+    reuse_verdicts: bool = True,
+) -> VideoRaw:
     """
-    Action boundaries from the video frames alone: dwells -> a VLM judges each
-    against the anchor -> the anchor advances only on an accepted boundary.
+    Dwells -> a VLM judges each against the anchor -> the anchor advances only
+    on an accepted boundary.
 
-    Runs for minutes; must not be called on a UI thread.
+    Runs for minutes on a miss; must not be called on a UI thread.
 
-    :param session: session whose .recording_path points at the MP4.
-    :param use_cache: reuse verdicts and the activity scan cached in the
-        session directory.
+    :param settings: supplies ACTIVITY_QUIET (frozen; a variant re-extracts).
+    :param use_cache: reuse the raw result, the verdicts and the activity scan
+        cached in the session directory, and store fresh ones.
     :param on_progress: called as (judged_pairs, total_pairs) after each pair.
-    :param is_cancelled: polled before each pair; True stops early and keeps the
-        evidence gathered so far.
+    :param is_cancelled: polled before each pair; True stops early and returns
+        what was gathered so far, which is then never stored.
+    :param reuse_verdicts: False asks the model again for every pair while still
+        reading the activity scan — what the repeatability check needs.
     :raises RuntimeError: when no VLM backend is reachable.
     """
     from docupilot.segmentation import video_scoring as vlm
+
+    settings = settings or Settings()
+    quiet = settings.activity_quiet
+    scan = scan_activity(session, use_cache=use_cache)
+    key = raw_key(settings)
+
+    def raw(verdicts: list[DwellVerdict], calls: int, limit_hit: bool) -> VideoRaw:
+        return VideoRaw(scan.times_s, scan.activity, scan.fps, quiet, verdicts, calls, limit_hit)
+
+    cached_raw = use_cache and reuse_verdicts
+    if cached_raw:
+        payload = store.load_raw(session, MODALITY, key)
+        if payload is not None:
+            try:
+                return raw(*_from_payload(payload))
+            except (KeyError, TypeError, ValueError):
+                pass                              # an unreadable result is a miss
 
     if not vlm.is_available():
         raise RuntimeError(
@@ -471,18 +580,21 @@ def extract(
             "ein rein struktureller Score misst Pixelmenge, nicht Bedeutung."
         )
 
-    scan = scan_activity(session, use_cache=use_cache)
-    if scan.n_frames < 2:
-        return BoundaryEvidence(scan.times_s, np.zeros(scan.n_frames, dtype=np.float32), [])
-
-    dwell_list = dwells(scan.activity, max(1, round(_MIN_DWELL_S * scan.fps)))
+    dwell_list = (
+        dwells(scan.activity, max(1, round(_MIN_DWELL_S * scan.fps)), quiet)
+        if scan.n_frames >= 2 else []
+    )
     if len(dwell_list) < 2:
-        return BoundaryEvidence(scan.times_s, np.zeros(scan.n_frames, dtype=np.float32), [])
+        result = raw([], 0, False)
+        if cached_raw:
+            store.save_raw(session, MODALITY, key, _to_payload([], 0, False))
+        return result
 
     settled = settled_frames(dwell_list, scan.fps)
     halves = _read_frames(str(session.recording_path), set(settled))
     steps = [
-        (start, frame) for (start, _), frame in zip(dwell_list, settled) if frame in halves
+        (start, end, frame)
+        for (start, end), frame in zip(dwell_list, settled) if frame in halves
     ]
 
     # The anchor is compared against every following dwell, so its grey version
@@ -504,10 +616,15 @@ def extract(
         return True
 
     cache = (
-        vlm.Cache(session.session_dir / "gui_vlm_cache.json") if use_cache else None
+        vlm.Cache(session.session_dir / VERDICT_CACHE_FILE)
+        if use_cache and reuse_verdicts else None
     )
+    calls = 0
+    limit_hit = False
 
     def judge(anchor: int, current: int) -> Judgement | None:
+        nonlocal calls
+        calls += 1
         composite = vlm.encode_pair(
             halves[anchor], halves[current], regions[(anchor, current)]
         )
@@ -516,6 +633,8 @@ def extract(
     def limit_reached() -> None:
         # A silent cap reads as "everything covered". Say what was dropped so
         # the missing tail is visible, not mistaken for "no more boundaries".
+        nonlocal limit_hit
+        limit_hit = True
         warnings.warn(
             f"Video: _MAX_CALLS={_MAX_CALLS} erreicht in {session.session_dir.name} "
             f"— restliche Dwells ungeprüft, spätere Grenzen fehlen.",
@@ -532,5 +651,7 @@ def extract(
 
     if cache is not None:
         cache.flush()                # also on cancel: keep what we paid for
-
-    return evidence_from_verdicts(verdicts, scan.times_s, scan.fps)
+    cancelled = is_cancelled is not None and is_cancelled()
+    if cached_raw and not cancelled:
+        store.save_raw(session, MODALITY, key, _to_payload(verdicts, calls, limit_hit))
+    return raw(verdicts, calls, limit_hit)
