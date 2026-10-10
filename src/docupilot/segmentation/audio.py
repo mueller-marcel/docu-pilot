@@ -14,7 +14,7 @@ Audio knows the INTERVAL a boundary falls in, never the instant. Under the
 "begin" definition the boundary belongs to THIS announcement, not the next: it
 sits at a signed offset d from an anchor of the sentence (its start or its end).
 d may be negative — in instructional recordings speech both precedes and
-trails the action — so the bump reaches PRE_S before the sentence.
+trails the action — so the bump reaches PRE_S (= 2τ) before the sentence.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from docupilot.config import (
     AUDIO_PEAK_FRACTION,
     AUDIO_PEAK_MAX_SHARE,
     GRID_HZ,
-    PRE_S,
     FoldParams,
     Settings,
 )
@@ -341,13 +340,14 @@ def bump_geometry(
     mode: str = "offset",
     anchor: str = "begin",
     offset_s: float = 0.0,
+    pre_s: float = Settings().pre_s,
 ) -> list[tuple[float, float, float] | None]:
     """
     (lo, hi, peak) of each sentence's bump in seconds; None for an empty window.
 
     "offset": peak k_i = a_i + d, bounded to [t_i − PRE_S, t_i + 0.9 (t_next − t_i)];
         the bump rises from max(t_i − PRE_S, k_{i−1}) — never before the previous
-        peak — and falls to t_next.
+        peak — and falls to t_next. PRE_S is `pre_s`, 2τ.
     "fraction" (sensitivity only): the bump spans [t_i, t_next] and peaks at
         AUDIO_PEAK_FRACTION of it — the former fixed completion position.
     """
@@ -361,8 +361,8 @@ def bump_geometry(
             out.append((t_i, t_next, t_i + AUDIO_PEAK_FRACTION * (t_next - t_i)))
             continue
         peak = anchor_time(sentence, anchor) + offset_s
-        peak = min(max(peak, t_i - PRE_S), t_i + AUDIO_PEAK_MAX_SHARE * (t_next - t_i))
-        lo = max(t_i - PRE_S, previous_peak, 0.0)
+        peak = min(max(peak, t_i - pre_s), t_i + AUDIO_PEAK_MAX_SHARE * (t_next - t_i))
+        lo = max(t_i - pre_s, previous_peak, 0.0)
         out.append((lo, t_next, peak))
         previous_peak = peak
     return out
@@ -520,6 +520,7 @@ def render(
         mode=settings.audio_peak_mode,
         anchor=params.audio_anchor,
         offset_s=params.peak_offset_s,
+        pre_s=settings.pre_s,
     )
     boundaries_s: list[float] = []
     for sentence, bump in zip(raw.sentences, geometry):

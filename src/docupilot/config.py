@@ -2,10 +2,9 @@
 Every setting a segmentation or evaluation run depends on, in one place, each
 with where its value comes from.
 
-There is no development session outside the corpus. A parameter is therefore
-either fixed before any label was seen (a priori, technical, set), frozen
-because re-tuning it would cost model calls, or calibrated inside each outer
-fold on that fold's TRAINING sessions only. `PARAMETERS` states which, and the
+A parameter is either fixed before any label was seen (a priori, technical,
+set), frozen because re-tuning it would cost model calls, or calibrated inside
+each outer fold on that fold's TRAINING sessions only. `PARAMETERS` states which, and the
 report prints that table.
 
 `Settings` holds the switches of one run and is what a variant (C12) changes.
@@ -60,8 +59,9 @@ FOREST_TREES_INNER = 200
 # Tolerances the predictions are scored at; the primary one is `tau_primary_s`.
 TAU_SWEEP_S: tuple[float, ...] = (0.25, 0.5, 1.0, 1.5, 2.0, 3.0)
 
-# Audio: how far a peak may reach BEFORE its sentence. 2τ, a priori (C1c).
-PRE_S = 2.0
+# Audio: how far a peak may reach BEFORE its sentence, in multiples of τ; a
+# priori (C1c). The value in seconds is Settings.pre_s, so it moves with τ.
+PRE_TAU = 2.0
 # Audio: upper bound of the peak, as a share of the sentence's window (C1c).
 AUDIO_PEAK_MAX_SHARE = 0.9
 # Audio "fraction" mode: where in its window the completion is expected. The
@@ -150,14 +150,14 @@ PARAMETERS: tuple[Parameter, ...] = (
               "Literaturwert der Schreibprozessforschung (Wengelin 2006); Sensitivität 1/2/3 s"),
     Parameter("SPREAD_S, LABEL_TOL_S, NMS_S", "= τ", A_PRIORI,
               "an TAU_PRIMARY gebunden; ändert sich τ, ziehen sie mit"),
-    Parameter("PRE_S", "2,0 s", A_PRIORI, "2τ; wie weit ein Audio-Peak vor den Satz reichen darf"),
+    Parameter("PRE_S", "= 2τ", A_PRIORI,
+              "wie weit ein Audio-Peak vor den Satz reichen darf; zieht mit τ mit"),
     Parameter("GRID_HZ, CAND_HZ", "50 / 5 Hz", TECHNICAL, "fest"),
     Parameter("_SETTLE_OFFSET_S, _PIXEL_CHANGE_EPS", "0,2 s / 1,0", SET,
               "fest; nicht getunt, nur als gesetzt dokumentiert"),
     Parameter("ACTIVITY_QUIET, _MIN_DWELL_S", "0,08 / 0,5 s", FROZEN,
-              "bestimmen die Dwells und damit die VLM-Aufrufe; laut Code auf einer "
-              "Entwicklungssession gesweept (Herkunft: N5) — eingefroren, Sensitivität "
-              "nur auf Teilkorpus"),
+              "bestimmen die Dwells und damit die VLM-Aufrufe; fest gesetzt und "
+              "eingefroren, Sensitivität nur auf Teilkorpus"),
     Parameter("_MAX_CALLS", "400", TECHNICAL, "fest; Treffer je Session im Bericht"),
     Parameter("AUDIO_ANCHOR, PEAK_OFFSET_S", "–", IN_FOLD,
               "Anker mit kleinerer Streuung, d = Median mit Vorzeichen; < 10 Paare → "
@@ -269,6 +269,10 @@ class Settings:
     @property
     def nms_s(self) -> float:
         return self.tau_primary_s
+
+    @property
+    def pre_s(self) -> float:
+        return PRE_TAU * self.tau_primary_s
 
     def replace(self, **changes: Any) -> Settings:
         return replace(self, **changes)

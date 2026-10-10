@@ -2,8 +2,7 @@
 The parameters calibrated inside each outer fold (C8), from that fold's
 TRAINING sessions only.
 
-There is no development session outside the corpus, so no parameter may be
-fitted to labels of a session that is later scored. What is cheap — because it
+No parameter may be fitted to labels of a session that is later scored. What is cheap — because it
 only moves how a cached raw result is drawn — is calibrated here per fold;
 what would cost model calls is frozen (see config.PARAMETERS).
 
@@ -20,7 +19,6 @@ import numpy as np
 
 from docupilot.config import (
     AUDIO_MIN_PAIRS,
-    PRE_S,
     REST_FULL_CANDIDATES_S,
     REST_FULL_DEFAULT_S,
     FoldParams,
@@ -64,7 +62,9 @@ def _nearest_in(gt: np.ndarray, lo: float, hi: float, target: float) -> float | 
 
 
 def calibrate_audio(
-    raws: Sequence[audio.AudioRaw], gts: Sequence[Sequence[float]]
+    raws: Sequence[audio.AudioRaw],
+    gts: Sequence[Sequence[float]],
+    pre_s: float = Settings().pre_s,
 ) -> AudioCalibration:
     """
     AUDIO_ANCHOR and PEAK_OFFSET_S from the training sessions.
@@ -78,6 +78,8 @@ def calibrate_audio(
 
     :param raws: the training sessions' audio raw results.
     :param gts: their reference boundaries, in the same order.
+    :param pre_s: PRE_S of the run (Settings.pre_s, 2τ), the same reach the
+        curve is drawn with.
     """
     offsets: dict[str, list[float]] = {"begin": [], "end": []}
     n_operations = 0
@@ -87,7 +89,7 @@ def calibrate_audio(
             if sentence.category != audio.OPERATION:
                 continue
             n_operations += 1
-            g = _nearest_in(reference, t_i - PRE_S, max(t_next, t_i), t_i)
+            g = _nearest_in(reference, t_i - pre_s, max(t_next, t_i), t_i)
             if g is None:
                 continue
             for anchor in offsets:
@@ -150,7 +152,7 @@ def calibrate(
     settings: Settings,
 ) -> Calibration:
     """All in-fold parameters of one fold, from its training sessions."""
-    audio_cal = calibrate_audio(audio_raws, gts)
+    audio_cal = calibrate_audio(audio_raws, gts, settings.pre_s)
     rest_full, scores = calibrate_rest_full(event_raws, gts, durations_s, settings)
     return Calibration(
         params=FoldParams(rest_full_s=rest_full, audio_anchor=audio_cal.anchor,
