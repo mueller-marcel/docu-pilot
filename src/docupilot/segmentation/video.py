@@ -42,9 +42,8 @@ _PHASH_SIZE = 8
 _ACTIVITY_GRID = 8
 
 # FROZEN (C8). They decide the dwells and therefore the VLM calls, so tuning
-# them in-fold is not affordable. Swept once on a development session for the
-# cheapest setting at full recall; the values are frozen and their origin
-# documented, a sensitivity run exists only on a sub-corpus.
+# them in-fold is not affordable. The values are set and frozen; a sensitivity
+# run exists only on a sub-corpus.
 ACTIVITY_QUIET = Settings().activity_quiet   # per-tile pHash distance below which a frame is "still"
 _MIN_DWELL_S = 0.5                           # a still run this long is a settled state
 

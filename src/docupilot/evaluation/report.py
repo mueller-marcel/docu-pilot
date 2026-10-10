@@ -298,6 +298,7 @@ def analyse(
         audio_diagnosis=calibration.calibrate_audio(
             [d.raws["audio"] for d in data],
             [d.gt_s(settings.boundary_definition) for d in data],
+            settings.pre_s,
         ) if data else None,
         shapley_by_tau={
             t: analysis.shapley(experiment.subset_values(rows, t), players)
@@ -731,6 +732,6 @@ def sections(report: Report) -> list[Section]:
                 "Modell-IDs, Abrufdaten, Aufrufbudget und nicht klassifizierte Tasten.",
                 text=provenance_text(report)),
         Section("Anhang · Parameter",
-                "Klasse und Behandlung jedes Parameters ohne Dev-Session.",
+                "Klasse und Behandlung jedes Parameters.",
                 text=appendix_text(report)),
     ]
