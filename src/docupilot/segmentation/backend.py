@@ -4,7 +4,8 @@ client, and the on-disk verdict cache they both keep beside the recording.
 
 Utilities only — no modality DATA passes through here, so the extractors'
 independence (see the package docstring) is untouched: audio_scoring and
-video_scoring share a transport and a cache format, never evidence.
+video_scoring share a transport, a cache format, the model and the boundary
+definition they judge against, never evidence.
 """
 
 from __future__ import annotations
@@ -47,8 +48,23 @@ def _load_dotenv() -> None:
         pass
 
 
-# At import time, before any module reads its DOCUPILOT_* variable.
+# At import time, before MODEL below reads its DOCUPILOT_* variable.
 _load_dotenv()
+
+# The ONE model both judged stages use. A single variable, not one per
+# modality: two models would judge the same boundary question with different
+# abilities, and the Shapley comparison would measure the models, not the
+# modalities. Different models get separate cache entries.
+MODEL = os.environ.get("DOCUPILOT_MODEL", "claude-sonnet-5")
+
+# The ONE definition both prompts judge against — the annotation guideline's
+# boundary (MA 3.1.3): the first perceivable hint of a NEW sub-goal. Kept here
+# so the two prompts cannot drift apart; changing it changes both prompts, so
+# bump both PROMPT_VERSIONs with it.
+SUBGOAL_DEFINITION = """\
+A sub-goal is what the person wants to achieve with a group of operations, for
+example "make the header bold", "sort the table by price", "save the file under a
+new name\"."""
 
 _CLIENT = None
 

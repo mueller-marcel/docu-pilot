@@ -4,15 +4,15 @@ time-shifted repetition of the annotation (test-retest, C5).
 
 The repetition yields the two numbers the evaluation otherwise has to set:
 
-    τ       the tolerance may not be smaller than the annotator's own
-            repetition deviation (from the distances of matched boundaries)
+    τ       the accuracy a boundary can be set with at all: the mean deviation
+            of the boundaries matched between run 1 and run 2 (formula 3.1)
     SESOI   a difference smaller than what changing the reference from run 1
             to run 2 does to the full model's F1 is annotation noise, not an
             effect (from `sesoi_from_retest`)
 
-Every candidate statistic is computed. Which one defines τ and the SESOI is a
-recorded decision (Settings.tau_rule, Settings.sesoi_rule); `derive_settings`
-applies it and writes the provenance next to the value.
+Both are measured on every run, never set: τ before it (`measure_tau`), the
+SESOI after the primary run (`measure_sesoi`); which SESOI candidate is used is
+a recorded decision (Settings.sesoi_rule).
 """
 
 from __future__ import annotations
@@ -22,46 +22,41 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from docupilot.config import Settings
 from docupilot.evaluation import metrics
-
-# Two boundaries further apart than this are not the same boundary set twice.
-MATCH_MAX_DIST_S = 3.0
 
 # Tolerances of the consistency F1 — the protocol of the GEBD benchmark.
 CONSISTENCY_TAUS_S: tuple[float, ...] = (0.2, 0.4, 0.6, 0.8, 1.0)
 
 # Bins of the distance histogram in the report.
-HISTOGRAM_EDGES_S: tuple[float, ...] = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0, MATCH_MAX_DIST_S)
+HISTOGRAM_EDGES_S: tuple[float, ...] = (0.0, 0.1, 0.25, 0.5, 1.0, 2.0, np.inf)
+
+
+def max_match_distance(g1: Sequence[float]) -> float:
+    """
+    δ_max = ½ · min_k (a_{k+1} − a_k) over the boundaries of run 1: two marks
+    closer than this can never be assigned to two different boundaries.
+    0 when run 1 has fewer than two boundaries — no gap, so no pair is formed.
+    """
+    a = np.sort(np.asarray(g1, dtype=np.float64))
+    return 0.5 * float(np.min(np.diff(a))) if len(a) >= 2 else 0.0
 
 
 def match_runs(
-    g1: Sequence[float], g2: Sequence[float], max_dist: float = MATCH_MAX_DIST_S
+    g1: Sequence[float], g2: Sequence[float]
 ) -> tuple[list[tuple[float, float]], tuple[list[float], list[float]]]:
     """
-    Pair the boundaries of two runs one-to-one (Kuhn–Munkres, as metrics.match).
+    Pair the boundaries of two runs one-to-one with |a_k − b_l| ≤ δ_max: as
+    many pairs as possible, ties broken by the smallest total distance
+    (Kuhn–Munkres, as metrics.match). Marks without a partner do not enter τ.
 
-    :return: the matched pairs (t1, t2), and the unmatched boundaries of run 1
+    :return: the matched pairs (a_k, b_l), and the unmatched boundaries of run 1
         and run 2.
     """
-    pairs = metrics.match(g1, g2, max_dist).pairs
+    d_max = max_match_distance(g1)
+    pairs = metrics.match(g1, g2, d_max).pairs if d_max > 0 else []
     used1 = {a for a, _ in pairs}
     used2 = {b for _, b in pairs}
     return pairs, ([t for t in g1 if t not in used1], [t for t in g2 if t not in used2])
-
-
-def tau_stats(pairs: Sequence[tuple[float, float]]) -> dict[str, float]:
-    """Mean, median, P90 and P95 of |t1 − t2| over all matched pairs, and n."""
-    d = np.abs(np.asarray([a - b for a, b in pairs], dtype=np.float64))
-    if len(d) == 0:
-        return {"mean": np.nan, "median": np.nan, "p90": np.nan, "p95": np.nan, "n": 0}
-    return {
-        "mean": float(d.mean()),
-        "median": float(np.median(d)),
-        "p90": float(np.percentile(d, 90)),
-        "p95": float(np.percentile(d, 95)),
-        "n": int(len(d)),
-    }
 
 
 def consistency_f1(
@@ -104,12 +99,17 @@ class Reliability:
     """The test-retest analysis of one corpus."""
 
     sessions: tuple[str, ...]
-    tau: dict[str, float]
     distances_s: list[float]
+    """|Δt_i| of every matched pair, over all retest sessions."""
     unmatched: int
     consistency: float
     sesoi_diffs: dict[str, float] = field(default_factory=dict)
     sesoi: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def tau_s(self) -> float:
+        """τ = (1/N) Σ |Δt_i| (formula 3.1); NaN without a pair."""
+        return float(np.mean(self.distances_s)) if self.distances_s else float("nan")
 
     def histogram(self) -> list[tuple[float, float, int]]:
         counts, edges = np.histogram(self.distances_s, bins=HISTOGRAM_EDGES_S)
@@ -144,7 +144,6 @@ def analyse(
     ) if predictions else {}
     return Reliability(
         sessions=sessions,
-        tau=tau_stats(pairs),
         distances_s=[abs(a - b) for a, b in pairs],
         unmatched=unmatched,
         consistency=float(np.mean([consistency_f1(run1[s], run2[s]) for s in sessions])),
@@ -153,26 +152,56 @@ def analyse(
     )
 
 
-def derive_settings(settings: Settings, reliability: Reliability) -> Settings:
+def measure_tau(
+    run1: Mapping[str, Sequence[float]], run2: Mapping[str, Sequence[float]]
+) -> tuple[float, str]:
     """
-    The settings with τ and the SESOI taken from the retest, by the recorded
-    rules, each with its provenance. A quantity the retest cannot provide yet
-    (no pairs; no predictions) keeps its current value and source.
+    τ (formula 3.1) and its provenance, measured before a run.
+
+    :raises ValueError: when no session was annotated twice, or no boundary of
+        the repetition could be paired — then τ cannot be measured and no run
+        may start.
     """
-    changes: dict[str, object] = {}
-    n = len(reliability.sessions)
-    tau = reliability.tau.get(settings.tau_rule, np.nan)
-    if tau == tau and tau > 0:
-        changes["tau_primary_s"] = round(float(tau), 3)
-        changes["tau_source"] = (
-            f"Wiederholungsannotation: {settings.tau_rule} der Abstände, "
-            f"n = {reliability.tau['n']} Paare aus {n} Sessions"
+    result = analyse(run1, run2)
+    if result is None:
+        raise ValueError(
+            "Keine Wiederholungsannotation (Lauf 2) im Korpus — τ lässt sich nicht messen. "
+            "Mindestens eine Session blind ein zweites Mal annotieren."
         )
-    sesoi = reliability.sesoi.get(settings.sesoi_rule, np.nan)
-    if sesoi == sesoi and sesoi > 0:
-        changes["sesoi"] = round(float(sesoi), 4)
-        changes["sesoi_source"] = (
-            f"Wiederholungsannotation: {settings.sesoi_rule} der F1-Differenzen des "
-            f"vollen Modells, {len(reliability.sesoi_diffs)} Sessions"
+    if not result.distances_s:
+        raise ValueError(
+            "Die Wiederholungsannotation liefert keine gepaarten Grenzen — τ lässt sich "
+            "nicht messen."
         )
-    return settings.replace(**changes) if changes else settings
+    return result.tau_s, (
+        f"Wiederholungsannotation: mittlere Abweichung (Formel 3.1), "
+        f"{len(result.distances_s)} Paare aus {len(result.sessions)} Sessions"
+    )
+
+
+def measure_sesoi(
+    run1: Mapping[str, Sequence[float]],
+    run2: Mapping[str, Sequence[float]],
+    predictions: Mapping[str, Sequence[float]],
+    tau_s: float,
+    rule: str,
+) -> tuple[float, str]:
+    """
+    The SESOI by the recorded rule and its provenance, measured from the full
+    model's predictions of the primary run.
+
+    :raises ValueError: when the retest sessions give no positive SESOI.
+    """
+    sessions = [s for s in run2 if s in run1]
+    diffs = sesoi_from_retest({s: predictions[s] for s in sessions if s in predictions},
+                              run1, run2, tau_s)
+    value = sesoi_candidates(diffs).get(rule, np.nan)
+    if not value > 0:
+        raise ValueError(
+            f"SESOI ({rule}) aus {len(diffs)} Retest-Session(s) = {value} — nicht verwendbar; "
+            "die Wiederholungsannotation verändert die F1 des vollen Modells nicht messbar."
+        )
+    return float(value), (
+        f"Wiederholungsannotation: {rule} der F1-Differenzen des vollen Modells, "
+        f"{len(diffs)} Sessions"
+    )

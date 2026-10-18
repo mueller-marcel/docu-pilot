@@ -1,7 +1,11 @@
 """
 Action boundaries from the audio track alone: each narrated sentence is judged by
-an LLM, and each sentence that announces an operation draws a bump around the
-moment its step is expected to begin.
+an LLM, and each sentence draws a window, as high as its boundary probability,
+that peaks where its step is expected to begin.
+
+The curve follows "Evidenzkurven: Breite τ und Gipfel", section 3: per sentence
+a raised-cosine window [L_j, R_j] with its peak c_j = anchor_j + d, merged by
+pointwise maximum.
 
 Two stages (C8):
 
@@ -14,7 +18,7 @@ Audio knows the INTERVAL a boundary falls in, never the instant. Under the
 "begin" definition the boundary belongs to THIS announcement, not the next: it
 sits at a signed offset d from an anchor of the sentence (its start or its end).
 d may be negative — in instructional recordings speech both precedes and
-trails the action — so the bump reaches PRE_S (= 2τ) before the sentence.
+trails the action — so the peak may lie up to P = 2τ before the sentence.
 """
 
 from __future__ import annotations
@@ -27,9 +31,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from docupilot.config import (
-    AUDIO_PEAK_FRACTION,
     AUDIO_PEAK_MAX_SHARE,
-    GRID_HZ,
     FoldParams,
     Settings,
 )
@@ -38,7 +40,7 @@ from docupilot.segmentation import store
 from docupilot.segmentation.evidence import (
     BOUNDARY_THRESHOLD,
     BoundaryEvidence,
-    apply_window,
+    draw_window,
     grid,
 )
 
@@ -49,20 +51,8 @@ _WHISPER_MODEL = "small"
 
 _SPACY_MODELS = ("de_core_news_lg", "de_core_news_md", "de_core_news_sm")
 
-# Horizon for the last window, used only when a recording has a single sentence
-# and there is no announcement gap to take a median of.
-_LAST_WINDOW_FALLBACK_S = 8.0
-
-# Where speech begins, for snap_to_speech_onset. SET, not tuned: how far either
-# side of Whisper's start to look, how far above the noise floor (its 10th
-# percentile) speech lies, and how long it must stay there.
-_ONSET_BACK_S = 0.2
-_ONSET_AHEAD_S = 1.0
-_ONSET_ABOVE_FLOOR_DB = 15.0
-_ONSET_SUSTAIN_S = 0.05
-
-# The category of a sentence that announces an operation.
-OPERATION = "OPERATION"
+# The category of a sentence that announces the first step toward a new sub-goal.
+NEW_SUBGOAL = "NEW_SUBGOAL"
 
 # What the LLM said about the narration, kept beside the recording.
 VERDICT_CACHE_FILE = "audio_llm_cache.json"
@@ -97,9 +87,9 @@ class AudioRaw:
     model: str = ""
     retrieved_at: str = ""
 
-    def windows(self) -> list[tuple[float, float]]:
-        """(t_i, t_next) per sentence, see sentence_windows."""
-        return sentence_windows([s.start_s for s in self.sentences], self.duration_s)
+    def windows(self, last_gap_s: float) -> list[tuple[float, float]]:
+        """(s_j, R_j) per sentence, see sentence_windows."""
+        return sentence_windows([s.start_s for s in self.sentences], last_gap_s)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -265,66 +255,30 @@ def sentences_from_words(full_text: str, words: list[dict]) -> list[tuple[float,
     return out
 
 
-def _load_audio(session: RecordingSession) -> tuple[np.ndarray, int]:
-    """The audio track, decoded (its length is not read off the container header)."""
-    import librosa
+def _duration_s(session: RecordingSession) -> float:
+    """Length of the audio track, decoded the way Whisper decodes it (16 kHz) —
+    not read off the container header."""
+    import whisper
 
-    y, sr = librosa.load(str(session.recording_path))
-    return y, int(sr)
-
-
-def snap_to_speech_onset(
-    parts: list[tuple[float, float, str]], y: np.ndarray, sr: int
-) -> list[tuple[float, float, str]]:
-    """
-    Move each sentence start to where speech actually begins.
-
-    Whisper's cross-attention word times put a sentence start into the silence
-    before it — measured 0.3 s early in the median, up to 0.5 s, on speech with
-    known onsets. The true onset is the first sustained rise of the signal above
-    the session's noise floor in [start − _ONSET_BACK_S, start + _ONSET_AHEAD_S];
-    "sustained" keeps a key click in the pause from counting as speech. A start
-    without such a rise is kept.
-    """
-    hop = int(sr * 0.01)
-    if len(y) < hop * 2:
-        return parts
-    step = hop / sr
-    frames = len(y) // hop
-    rms = np.sqrt(np.mean(y[: frames * hop].reshape(frames, hop) ** 2, axis=1))
-    db = 20 * np.log10(rms + 1e-10)
-    loud = db > np.percentile(db, 10) + _ONSET_ABOVE_FLOOR_DB
-    need = max(int(_ONSET_SUSTAIN_S / step), 1)
-    # sustained[i]: frames i .. i+need-1 are all loud
-    run = np.convolve(loud.astype(int), np.ones(need, dtype=int))[need - 1:]
-    sustained = run[:frames] >= need
-
-    out = []
-    for start, end, text in parts:
-        lo = max(int((start - _ONSET_BACK_S) / step), 0)
-        hi = min(int(min(start + _ONSET_AHEAD_S, end) / step), frames)
-        hits = np.flatnonzero(sustained[lo:hi])
-        onset = round((lo + int(hits[0])) * step, 3) if len(hits) else start
-        out.append((onset, max(onset, end), text))
-    return out
+    return len(whisper.load_audio(str(session.recording_path))) / whisper.audio.SAMPLE_RATE
 
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
 
-def sentence_windows(starts_s: Sequence[float], duration_s: float) -> list[tuple[float, float]]:
+def sentence_windows(starts_s: Sequence[float], last_gap_s: float) -> list[tuple[float, float]]:
     """
-    (t_i, t_next) per sentence: from one announcement to the next.
+    (s_j, R_j) per sentence: R_j = s_{j+1}, the start of the next announcement.
 
-    The last window has no following announcement to close it and is closed by
-    this session's own MEDIAN announcement gap (a fast speaker gets a shorter
-    one), at the latest by the end of the recording. Windows that would be
-    empty are returned and rejected by the caller.
+    The last window has no following announcement to close it:
+    R_J = s_J + med_k(s_{k+1} − s_k), the session's own median gap (a fast
+    speaker gets a shorter one); with a single sentence there is no gap and
+    `last_gap_s` (Settings.last_gap_s, 4τ) is used.
     """
     if not len(starts_s):
         return []
     gaps = np.diff(starts_s)
-    horizon = float(np.median(gaps)) if len(gaps) else _LAST_WINDOW_FALLBACK_S
-    ends = [*starts_s[1:], min(starts_s[-1] + horizon, duration_s)]
+    horizon = float(np.median(gaps)) if len(gaps) else last_gap_s
+    ends = [*starts_s[1:], starts_s[-1] + horizon]
     return list(zip((float(s) for s in starts_s), (float(e) for e in ends)))
 
 
@@ -333,37 +287,32 @@ def anchor_time(sentence: Sentence, anchor: str) -> float:
     return sentence.start_s if anchor == "begin" else sentence.end_s
 
 
-def bump_geometry(
+def window_geometry(
     sentences: Sequence[Sentence],
     windows: Sequence[tuple[float, float]],
     *,
-    mode: str = "offset",
-    anchor: str = "begin",
-    offset_s: float = 0.0,
-    pre_s: float = Settings().pre_s,
-) -> list[tuple[float, float, float] | None]:
+    anchor: str,
+    offset_s: float,
+    pre_s: float,
+) -> list[tuple[float, float, float]]:
     """
-    (lo, hi, peak) of each sentence's bump in seconds; None for an empty window.
+    (L_j, c_j, R_j) of each sentence's window in seconds:
 
-    "offset": peak k_i = a_i + d, bounded to [t_i − PRE_S, t_i + 0.9 (t_next − t_i)];
-        the bump rises from max(t_i − PRE_S, k_{i−1}) — never before the previous
-        peak — and falls to t_next. PRE_S is `pre_s`, 2τ.
-    "fraction" (sensitivity only): the bump spans [t_i, t_next] and peaks at
-        AUDIO_PEAK_FRACTION of it — the former fixed completion position.
+        c*_j = anchor_j + d
+        c_j  = min(max(c*_j, s_j − P), s_j + 0.9 (R_j − s_j))     P = `pre_s` = 2τ
+        L_j  = max(min(s_j, c_j), c_{j−1})
+
+    The peak may lie up to P before the sentence (acting first, narrating
+    after) and at most 90 % into the window; the curve never starts before the
+    previous sentence's peak.
     """
-    out: list[tuple[float, float, float] | None] = []
+    out: list[tuple[float, float, float]] = []
     previous_peak = -np.inf
-    for sentence, (t_i, t_next) in zip(sentences, windows):
-        if t_next <= t_i:                     # spaCy split, same Whisper word
-            out.append(None)
-            continue
-        if mode == "fraction":
-            out.append((t_i, t_next, t_i + AUDIO_PEAK_FRACTION * (t_next - t_i)))
-            continue
+    for sentence, (s_j, r_j) in zip(sentences, windows):
         peak = anchor_time(sentence, anchor) + offset_s
-        peak = min(max(peak, t_i - pre_s), t_i + AUDIO_PEAK_MAX_SHARE * (t_next - t_i))
-        lo = max(t_i - pre_s, previous_peak, 0.0)
-        out.append((lo, t_next, peak))
+        peak = min(max(peak, s_j - pre_s), s_j + AUDIO_PEAK_MAX_SHARE * (r_j - s_j))
+        left = max(min(s_j, peak), previous_peak)
+        out.append((left, peak, r_j))
         previous_peak = peak
     return out
 
@@ -377,7 +326,6 @@ def raw_key(settings: Settings) -> str:
     return "|".join((
         _WHISPER_MODEL, settings.asr_alignment, ",".join(_SPACY_MODELS),
         judge.MODEL, judge.PROMPT_VERSION,
-        f"onset{_ONSET_BACK_S},{_ONSET_AHEAD_S},{_ONSET_ABOVE_FLOOR_DB},{_ONSET_SUSTAIN_S}",
     ))
 
 
@@ -452,11 +400,8 @@ def extract_raw(
 
     if on_progress is not None:
         on_progress(0, 2)
-    y, sr = _load_audio(session)
-    duration_s = len(y) / float(sr)
+    duration_s = _duration_s(session)
     parts = sentences_from_words(*_transcribe(session, settings.asr_alignment))
-    if settings.asr_alignment == "whisper":
-        parts = snap_to_speech_onset(parts, y, sr)
     if not parts:
         raw = AudioRaw(duration_s, [])
         if use_cache and reuse_verdicts:
@@ -500,41 +445,32 @@ def extract_raw(
 # ── Stage 2: render ───────────────────────────────────────────────────────────
 
 def render(
-    raw: AudioRaw, settings: Settings | None = None, params: FoldParams | None = None
+    raw: AudioRaw, settings: Settings, params: FoldParams | None = None
 ) -> BoundaryEvidence:
     """
-    Draw each judged sentence as a raised-cosine bump scaled by its p_boundary.
+    Draw each judged sentence as a raised-cosine window of height p_j, merged
+    by pointwise maximum. Sentences with p_j = 0 draw nothing but still close
+    the previous window and pass on their peak.
 
-    :param settings: supplies AUDIO_PEAK_MODE.
+    :param settings: supplies P = 2τ and the last window's fallback 4τ.
     :param params: supplies AUDIO_ANCHOR and PEAK_OFFSET_S, calibrated in-fold.
     """
-    settings = settings or Settings()
     params = params or FoldParams()
     times_s = grid(raw.duration_s)
     if len(times_s) == 0:
         return BoundaryEvidence.empty()
     score = np.zeros(len(times_s), dtype=np.float32)
 
-    geometry = bump_geometry(
-        raw.sentences, raw.windows(),
-        mode=settings.audio_peak_mode,
+    geometry = window_geometry(
+        raw.sentences, raw.windows(settings.last_gap_s),
         anchor=params.audio_anchor,
         offset_s=params.peak_offset_s,
         pre_s=settings.pre_s,
     )
     boundaries_s: list[float] = []
-    for sentence, bump in zip(raw.sentences, geometry):
-        if bump is None:
-            continue
-        lo_s, hi_s, peak_s = bump
-        peak = apply_window(
-            score,
-            lo=int(round(lo_s * GRID_HZ)),
-            hi=int(round(hi_s * GRID_HZ)),
-            peak=int(round(peak_s * GRID_HZ)),
-            value=sentence.p_boundary,
-        )
+    for sentence, (left_s, peak_s, right_s) in zip(raw.sentences, geometry):
+        draw_window(score, times_s, left_s, peak_s, right_s, sentence.p_boundary)
         if sentence.p_boundary >= BOUNDARY_THRESHOLD:
-            boundaries_s.append(float(times_s[peak]))
+            boundaries_s.append(peak_s)
 
     return BoundaryEvidence(times_s, score, boundaries_s)

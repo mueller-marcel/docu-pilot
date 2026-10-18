@@ -7,7 +7,7 @@ valid; a single cross-read would make those numbers measure the leak).
     video.py          boundaries from the screen recording alone
     audio.py          boundaries from the audio track alone
     events.py         boundaries from events.json alone
-    video_scoring.py  the VLM that judges a pair of settled screens
+    video_scoring.py  the VLM that judges whether a screen change starts a new sub-goal
     audio_scoring.py  the LLM that judges a narrated sentence
     backend.py        .env + Anthropic client, shared by the two scoring stages
     store.py          raw results and drawn lanes, kept in the session

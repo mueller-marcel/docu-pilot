@@ -1,6 +1,7 @@
 """
 The audio modality's semantic stage: an LLM decides, per narrated sentence,
-whether it announces an operation (a boundary) or only a means.
+whether it announces the first step toward a NEW sub-goal — the same boundary
+question the video judge asks of a screen change.
 
 Reads the transcript only, never the screen or the event stream.
 """
@@ -9,7 +10,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 from dataclasses import dataclass, replace
 
@@ -17,59 +17,63 @@ import numpy as np
 
 from docupilot.segmentation import backend
 
-# backend's import loaded .env, so the variable is visible here.
-MODEL = os.environ.get("DOCUPILOT_AUDIO_MODEL", "claude-opus-4-8")
+# Shared with the video judge (DOCUPILOT_MODEL) — see backend.MODEL.
+MODEL = backend.MODEL
 
 # Bump when the prompt or the score mapping changes — invalidates cached verdicts.
+# a3: judged against the guideline's boundary, the first hint of a NEW sub-goal
+#     (backend.SUBGOAL_DEFINITION, as the video judge); a2 asked for the
+#     completion of an operation with a persistent result, so an announced
+#     menu opening was MEANS where the guideline sets the boundary.
 # a2: dropped the example sentences; a1's were lifted from the session under
 #     evaluation, so its verdicts prove nothing about generalisation.
-PROMPT_VERSION = "a2"
+PROMPT_VERSION = "a3"
 
-_BOUNDARY = "OPERATION"
+_BOUNDARY = "NEW_SUBGOAL"
 _CATEGORIES = (
-    _BOUNDARY,   # announces an operation that completes in a new persistent state
-    "MEANS",     # navigation / selection / setup on the way to another operation
-    "OTHER",     # filler, commentary, verification — announces nothing
+    _BOUNDARY,        # announces the first step toward a different sub-goal
+    "SAME_SUBGOAL",   # continues, corrects or finishes the current one
+    "OTHER",          # filler, commentary, verification — announces no step
 )
 
-# The annotation guideline restated for narration, and nothing else. No example
-# sentences on purpose — see PROMPT_VERSION.
+# The annotation guideline restated for narration, in the video judge's words,
+# and nothing else. No example sentences on purpose — see PROMPT_VERSION.
 _SYSTEM = """\
 You are given the spoken narration of a person working through a task in desktop
 software, transcribed and split into sentences, in order. They were told to say
 each step out loud as they do it. The narration may be in German.
 
-For EACH sentence decide what it announces, using this definition:
-
-  A BOUNDARY is the completion of an operation the user carried out — the moment
-  its result becomes visible and settles into a state that PERSISTS.
+""" + backend.SUBGOAL_DEFINITION + """ For EACH sentence the question is whether
+it announces the FIRST step toward a NEW sub-goal.
 
 Categories:
 
-  OPERATION  The sentence announces an operation whose completion is a boundary:
-             something is applied, created, entered, deleted, moved, inserted,
-             saved or opened, or a view/mode is deliberately switched to and kept
-             because that switch is itself the goal.
+  NEW_SUBGOAL   The sentence announces a step that serves a DIFFERENT goal than
+                the sentences before it were working toward. This includes the
+                first move on the way there: opening a menu, a dialog or a
+                context menu, selecting another object, or switching to another
+                sheet, tab, folder or window IN ORDER TO do something new - and
+                a sentence that names the new goal itself.
+  SAME_SUBGOAL  The sentence announces a step that continues or finishes the
+                current goal: a further operation toward the same aim, a step
+                inside a menu or dialog already opened for it, correcting a
+                mistake such as a typo, or waiting for something just started.
+  OTHER         Announces no step: filler, thinking aloud, commentary on a
+                result, reading or checking something, greetings.
 
-  MEANS      The sentence announces only a step ON THE WAY to another operation —
-             it leaves nothing that persists: navigating or switching to where
-             the next action will happen, scrolling to bring something into view,
-             selecting or marking, copying to the clipboard, opening a menu or
-             dialog, clicking into a field before typing in it.
+Judge the sentences IN CONTEXT of the sequence: the current goal is the one the
+preceding sentences have been working toward, and the following sentences show
+what a step was for. When several sentences lead to a new goal, only the FIRST
+of them is NEW_SUBGOAL. The first step of the whole narration begins the first
+sub-goal, which follows no other one: it is SAME_SUBGOAL.
 
-  OTHER      Announces no step: filler, thinking aloud, commentary on a result,
-             reading or checking something, greetings.
-
-Judge the sentences IN CONTEXT of the sequence: a sentence is MEANS when the
-sentence that follows it names the operation it was serving.
-
-The decisive question is NOT whether an action is mentioned — the speaker
-narrates every step, so almost every sentence mentions one. The question is
-whether what is announced LEAVES A PERSISTENT RESULT (OPERATION) or is only a
-way to get there (MEANS).
+What decides is the person's goal, not whether an action is mentioned - the
+speaker narrates every step, so almost every sentence mentions one. When the
+sentences do not tell whether a new sub-goal begins, give a low confidence
+rather than guessing.
 
 Answer with ONE JSON object and nothing else:
-{"verdicts": [{"i": <sentence index>, "category": "<OPERATION|MEANS|OTHER>",
+{"verdicts": [{"i": <sentence index>, "category": "<NEW_SUBGOAL|SAME_SUBGOAL|OTHER>",
                "confidence": <0.0-1.0>, "reason": "<max 10 words>"}, ...]}
 One entry per sentence, in order, indices starting at 0."""
 
@@ -139,7 +143,7 @@ def ask(sentences: list[str], model: str = MODEL) -> str:
 def parse(raw: str, n: int) -> list[Judgement] | None:
     """
     Turn the model's answer into one graded judgement per sentence: P(boundary)
-    is the confidence for OPERATION and its complement otherwise.
+    is the confidence for NEW_SUBGOAL and its complement otherwise.
     """
     match = re.search(r"\{.*\}", raw, re.DOTALL)
     if not match:

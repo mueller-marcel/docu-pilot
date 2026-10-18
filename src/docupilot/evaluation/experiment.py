@@ -5,15 +5,19 @@ ever having seen that session's labels.
 
 One outer fold per session (leave-one-session-out):
 
-    1. calibrate REST_FULL_S, AUDIO_ANCHOR, PEAK_OFFSET_S on the training
-       sessions (C8)
-    2. draw every session's curves with those parameters
+    1. calibrate AUDIO_ANCHOR, PEAK_OFFSET_S and the video's
+       noise threshold θ and minimum rest d on the training sessions (C8)
+    2. draw every session's curves with those parameters — for the video this
+       is where its changes are judged, once per session and (θ, d)
     3. per coalition: choose the threshold by an inner GroupKFold, fit the
        decider on all training sessions, predict the held-out one (C4)
 
 `run_fold` is the whole fold and never reads the held-out session's labels;
 scoring happens afterwards in `run`. Every later analysis — Shapley,
 saturation, statistics — is derived from the tidy table `run` produces.
+
+τ and the SESOI are measured, never set: `measure_tau` before the first run,
+`measure_sesoi` from the primary run's predictions before any statistics.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ from typing import Any
 import numpy as np
 
 from docupilot.config import BOUNDARY_DEFINITIONS, TAU_SWEEP_S, FoldParams, Settings
-from docupilot.evaluation import calibration, dataset, fusion, metrics
+from docupilot.evaluation import calibration, dataset, fusion, metrics, reliability
 from docupilot.evaluation.analysis import subsets
 from docupilot.evaluation.calibration import Calibration
 from docupilot.recording.session import RecordingSession
@@ -38,8 +42,8 @@ from docupilot.segmentation import MODALITIES, BoundaryEvidence, extract_raws, r
 EMPTY_SUBSET_LABEL = "{}"
 
 # Settings that change a modality's RAW result; a variant differing in one of
-# them needs its own extraction (burst pause: free; the other two: model calls).
-RAW_SETTINGS: tuple[str, ...] = ("burst_pause_s", "activity_quiet", "asr_alignment")
+# them needs its own extraction (burst pause: free; ASR alignment: model calls).
+RAW_SETTINGS: tuple[str, ...] = ("burst_pause_s", "asr_alignment")
 
 
 @dataclass(frozen=True)
@@ -92,8 +96,7 @@ class ExperimentResult:
 def variant_label(settings: Settings) -> str:
     """A short name of a run's switches, for tables and CSV rows."""
     return (f"{settings.decider}·{settings.candidate_pool}·{settings.boundary_definition}"
-            f"·ev={settings.event_channels}·pause={settings.burst_pause_s:g}"
-            f"·audio={settings.audio_peak_mode}·quiet={settings.activity_quiet:g}")
+            f"·ev={settings.event_channels}·pause={settings.burst_pause_s:g}")
 
 
 def subset_label(subset: Sequence[str] | frozenset[str]) -> str:
@@ -118,9 +121,9 @@ def load(
     """
     Extract every modality's raw result once per session and keep it in memory.
 
-    The costly model calls happen here — once per session and modality, not
-    per coalition, fold or calibrated parameter: all of those only redraw the
-    cached raw results.
+    The audio model calls happen here — once per session, not per coalition,
+    fold or calibrated parameter. The video's VLM calls follow in the folds,
+    once per session and chosen (θ, d); a pair chosen again is cached.
 
     :param on_progress: called as (session name, done, total).
     :param is_cancelled: polled between and inside sessions; True stops early
@@ -162,22 +165,62 @@ def needs_extraction(primary: Settings, variant: Settings) -> bool:
     return any(getattr(primary, n) != getattr(variant, n) for n in RAW_SETTINGS)
 
 
+# ── Measured settings ─────────────────────────────────────────────────────────
+
+def _annotation_runs(
+    data: Sequence[SessionData], definition: str
+) -> tuple[dict[str, list[float]], dict[str, list[float]]]:
+    """Run 1 and its blind repetition (run 2) per session, under one definition."""
+    return (
+        {d.name: d.gt_s(definition) for d in data if d.has(definition)},
+        {d.name: d.gt_s(definition, 2) for d in data if d.has(definition, 2)},
+    )
+
+
+def measure_tau(data: Sequence[SessionData], settings: Settings) -> Settings:
+    """
+    The settings with τ measured from the corpus' repeated annotation (formula
+    3.1), before any run.
+
+    :raises ValueError: when the corpus has no usable repetition.
+    """
+    tau, source = reliability.measure_tau(*_annotation_runs(data, settings.boundary_definition))
+    return settings.replace(tau_primary_s=tau, tau_source=source)
+
+
+def measure_sesoi(data: Sequence[SessionData], primary: ExperimentResult) -> Settings:
+    """
+    The primary run's settings with the SESOI measured from its full model's
+    predictions on the retest sessions. Stored on `primary` as well, so the
+    statistics of the primary run use it; variants are made from the result.
+
+    :raises ValueError: when the retest gives no positive SESOI.
+    """
+    s = primary.settings
+    sesoi, source = reliability.measure_sesoi(
+        *_annotation_runs(data, s.boundary_definition),
+        primary.predictions(subset_label(MODALITIES)), s.tau_s, s.sesoi_rule,
+    )
+    primary.settings = s.replace(sesoi=sesoi, sesoi_source=source)
+    return primary.settings
+
+
 # ── One fold ──────────────────────────────────────────────────────────────────
 
 def _param_key(modality: str, params: FoldParams) -> tuple:
     """The fold parameters a modality's curve actually depends on."""
     if modality == "events":
-        return (params.rest_full_s,)
+        return ()
     if modality == "audio":
         return (params.audio_anchor, params.peak_offset_s)
-    return ()
+    return (params.video_theta, params.video_min_rest_s)
 
 
 class FeatureCache:
     """
     Curves and feature blocks shared across folds. Most folds calibrate the
-    same parameters, and the video curve never depends on them, so a block is
-    computed once per (session, modality, parameters, candidates).
+    same parameters, so a block is computed once per (session, modality,
+    parameters, candidates).
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -194,7 +237,8 @@ class FeatureCache:
 
     def grid(self, session: SessionData) -> np.ndarray:
         if session.name not in self._grids:
-            self._grids[session.name] = fusion.grid_candidates(session.duration_s)
+            self._grids[session.name] = fusion.grid_candidates(
+                session.duration_s, self._settings.cand_spacing_s)
         return self._grids[session.name]
 
     def table(
@@ -205,7 +249,8 @@ class FeatureCache:
         for m in modalities:
             key = (session.name, m, _param_key(m, params), cand_key)
             if key not in self._blocks:
-                self._blocks[key] = fusion.modality_features(self.evidence(session, m, params), cand)
+                self._blocks[key] = fusion.modality_features(
+                    self.evidence(session, m, params), cand, self._settings.tau_s)
             blocks.append((m, *self._blocks[key]))
         return fusion.FeatureTable.from_blocks(cand, blocks)
 
@@ -237,14 +282,13 @@ def run_fold(
     """
     cache = cache or FeatureCache(settings)
     definition = settings.boundary_definition
-    tau = settings.tau_primary_s
+    tau = settings.tau_s
     train = [d for i, d in enumerate(data) if i != held_out]
     test = data[held_out]
     gts = [d.gt_s(definition) for d in train]
 
     cal = calibration.calibrate(
-        [d.raws["audio"] for d in train], [d.raws["events"] for d in train],
-        gts, [d.duration_s for d in train], settings,
+        [d.raws["audio"] for d in train], [d.raws["video"] for d in train], gts, settings,
     )
     params = cal.params
     baseline = fusion.EmptyBaseline.fit([d.duration_s for d in train], [len(g) for g in gts])
@@ -266,7 +310,8 @@ def run_fold(
         if not members:
             predicted = baseline.predict(test.duration_s)
         elif kind == "rule":
-            predicted = fusion.RuleFuser().predict(test_evidence, members, test.duration_s, baseline)
+            predicted = fusion.RuleFuser(settings.nms_s).predict(
+                test_evidence, members, test.duration_s, baseline)
         else:
             prepared = []
             for d, gt in zip(train, gts):
@@ -307,9 +352,8 @@ def usable(data: Sequence[SessionData], definition: str) -> list[SessionData]:
 
 def run(
     data: Sequence[SessionData],
-    settings: Settings | None = None,
+    settings: Settings,
     players: Sequence[str] = MODALITIES,
-    taus_s: Sequence[float] = TAU_SWEEP_S,
     on_progress: Callable[[str, int, int], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> ExperimentResult:
@@ -318,12 +362,14 @@ def run(
 
     :param data: the corpus; at least two sessions annotated under the
         settings' boundary definition.
-    :param taus_s: tolerances every prediction is scored at.
+    :param settings: with τ measured (measure_tau).
     :param on_progress: called as (held-out session, done, total).
-    :return: one row per (session, coalition, tolerance), plus the folds.
-    :raises ValueError: when fewer than two sessions carry the definition.
+    :return: one row per (session, coalition, tolerance), plus the folds; the
+        tolerances are the measured τ and the robustness sweep TAU_SWEEP_S.
+    :raises ValueError: when fewer than two sessions carry the definition, or
+        τ was not measured.
     """
-    settings = settings or Settings()
+    taus_s = sorted({settings.tau_s, *TAU_SWEEP_S})
     definition = settings.boundary_definition
     data = usable(data, definition)
     if len(data) < 2:
@@ -340,7 +386,8 @@ def run(
             break
         fold = run_fold(data, index, settings, players, cache)
         result.folds.append(fold)
-        video = test.raws.get("video")
+        params = fold.calibration.params
+        video = test.raws["video"].judged.get((params.video_theta, params.video_min_rest_s))
         audio_cal = fold.calibration.audio
         for label, predicted in fold.predictions.items():
             for tau in taus_s:
@@ -357,12 +404,15 @@ def run(
                     "tau_s": tau,
                     "threshold": fold.thresholds[label],
                     "threshold_oob": fold.thresholds_oob[label],
-                    "rest_full_s": fold.calibration.params.rest_full_s,
                     "audio_anchor": fold.calibration.params.audio_anchor,
                     "peak_offset_s": fold.calibration.params.peak_offset_s,
                     "audio_pairs": audio_cal.n_pairs,
                     "audio_match_rate": audio_cal.match_rate,
                     "audio_fallback": audio_cal.fallback,
+                    "video_theta": params.video_theta,
+                    "video_min_rest_s": params.video_min_rest_s,
+                    "video_candidate_f1": fold.calibration.video.f1,
+                    "video_changes": getattr(video, "n_changes", 0),
                     "video_calls": getattr(video, "calls", 0),
                     "video_limit_hit": getattr(video, "limit_hit", False),
                     "n_predicted": len(predicted),

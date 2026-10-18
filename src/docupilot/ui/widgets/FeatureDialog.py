@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from docupilot.config import DISPLAY_TAU_S, Settings
 from docupilot.recording.session import RecordingSession
 from docupilot.segmentation import MODALITIES, BoundaryEvidence, segment
 from docupilot.ui.widgets.FeatureTimelineWidget import FeatureTimelineWidget
@@ -35,8 +36,8 @@ _LANES: dict[str, dict[str, str]] = {
         "color":   "#a78bfa",
     },
     "video": {
-        "section": "  ►  Video (pHash-Zustände + VLM: neuer Zustand?)",
-        "label":   "Video-Boundary-Score  ·  neuer Zustand?",
+        "section": "  ►  Video (SSIM-Ruhephasen + VLM auf Vorher/Nachher: neues Teilziel?, am Änderungsbeginn)",
+        "label":   "Video-Boundary-Score  ·  beginnt ein neues Teilziel?",
         "name":    "Video",
         "color":   "#fb923c",
     },
@@ -81,6 +82,9 @@ class _FeatureWorker(QObject):
             self._session,
             on_result=self._keep,
             on_error=self.lane_failed.emit,
+            # A single recording belongs to no corpus with a retest: its lanes
+            # are drawn with the display τ, never used by an evaluation.
+            settings=Settings(tau_primary_s=DISPLAY_TAU_S, tau_source="Anzeige"),
             on_progress=self.progress.emit,
             is_cancelled=lambda: self._cancelled,
         )

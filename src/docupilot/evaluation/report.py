@@ -101,11 +101,11 @@ class Report:
 
     @property
     def tau_s(self) -> float:
-        return self.settings.tau_primary_s
+        return self.settings.tau_s
 
     @property
     def relevance_threshold(self) -> float:
-        return self.settings.sesoi
+        return self.settings.sesoi_value
 
     @property
     def total(self) -> float:
@@ -137,14 +137,14 @@ class Report:
 def _estimates(per_session: Mapping, prefix: Callable, settings: Settings, family: int) -> dict:
     level = statistics.family_level(settings, family)
     return {
-        key: statistics.estimate(prefix(key), values, settings.sesoi, level)
+        key: statistics.estimate(prefix(key), values, settings.sesoi_value, level)
         for key, values in per_session.items()
     }
 
 
 def _variant(result: ExperimentResult, overrides: dict, players: Sequence[str]) -> VariantSummary:
     settings = result.settings
-    tau = settings.tau_primary_s
+    tau = settings.tau_s
     paired = experiment.paired_metric(result.rows, tau)
     steps = _estimates(statistics.steps_per_session(paired, players),
                        lambda k: f"Δ({k})", settings, len(players))
@@ -178,6 +178,24 @@ def _thresholds(rows: Sequence[dict], tau_s: float) -> dict[frozenset[str], tupl
     }
 
 
+def _fold_row(fold: experiment.FoldResult, data: Sequence[SessionData]) -> dict:
+    """What one fold calibrated, and what the video cost on its held-out session."""
+    cal, p = fold.calibration, fold.calibration.params
+    held_out = next((d for d in data if d.name == fold.held_out), None)
+    judged = (None if held_out is None
+              else held_out.raws["video"].judged.get((p.video_theta, p.video_min_rest_s)))
+    return {
+        "session": fold.held_out,
+        "anchor": cal.audio.anchor, "offset_s": cal.audio.offset_s,
+        "pairs": cal.audio.n_pairs, "match_rate": cal.audio.match_rate,
+        "fallback": cal.audio.fallback,
+        "video_theta": p.video_theta, "video_min_rest_s": p.video_min_rest_s,
+        "video_f1": cal.video.f1,
+        "video_changes": judged.n_changes if judged else 0,
+        "video_calls": judged.calls if judged else 0,
+    }
+
+
 def _provenance(data: Sequence[SessionData]) -> dict[str, object]:
     models: set[str] = set()
     dates: list[str] = []
@@ -185,11 +203,12 @@ def _provenance(data: Sequence[SessionData]) -> dict[str, object]:
     for d in data:
         video_raw, audio_raw, events_raw = d.raws.get("video"), d.raws.get("audio"), d.raws.get("events")
         if video_raw is not None:
-            for v in video_raw.verdicts:
-                models.add(v.judgement.model or "(unbekannt, Alt-Cache)")
-                if v.judgement.retrieved_at:
-                    dates.append(v.judgement.retrieved_at)
-            if video_raw.limit_hit:
+            for judged in video_raw.judged.values():
+                for v in judged.verdicts:
+                    models.add(v.judgement.model or "(unbekannt, Alt-Cache)")
+                    if v.judgement.retrieved_at:
+                        dates.append(v.judgement.retrieved_at)
+            if any(j.limit_hit for j in video_raw.judged.values()):
                 limit_hits.append(d.name)
         if audio_raw is not None and audio_raw.sentences:
             models.add(audio_raw.model or "(unbekannt, Alt-Cache)")
@@ -202,7 +221,6 @@ def _provenance(data: Sequence[SessionData]) -> dict[str, object]:
         "models": sorted(models),
         "retrieved": (min(dates)[:10], max(dates)[:10]) if dates else None,
         "limit_hits": limit_hits,
-        "video_calls": {d.name: getattr(d.raws.get("video"), "calls", 0) for d in data},
         "unknown_keys": dict(sorted(unknown.items(), key=lambda kv: -kv[1])),
     }
 
@@ -246,7 +264,7 @@ def analyse(
     """
     settings = primary.settings
     players = tuple(players)
-    tau = settings.tau_primary_s
+    tau = settings.tau_s
     rows = primary.rows
     data = experiment.usable(data, settings.boundary_definition)
     paired = experiment.paired_metric(rows, tau)
@@ -276,10 +294,10 @@ def analyse(
         curve=analysis.saturation(values, players),
         saturation={m: statistics.saturation_point(steps, m) for m in statistics.METHODS},
         recall_all=statistics.estimate(
-            "Recall", experiment.paired_metric(rows, tau, "recall")[full], settings.sesoi,
+            "Recall", experiment.paired_metric(rows, tau, "recall")[full], settings.sesoi_value,
             settings.ci_level),
         precision_all=statistics.estimate(
-            "Precision", experiment.paired_metric(rows, tau, "precision")[full], settings.sesoi,
+            "Precision", experiment.paired_metric(rows, tau, "precision")[full], settings.sesoi_value,
             settings.ci_level),
         chance=float(np.mean([
             metrics.chance_level(d.gt_s(settings.boundary_definition), d.duration_s, tau)
@@ -288,17 +306,11 @@ def analyse(
         efficiency_error=max(statistics.efficiency_errors(paired, players).values()),
         linearity_error=statistics.linearity_error(paired, players),
         thresholds=_thresholds(rows, tau),
-        folds=[
-            {"session": f.held_out, "rest_full_s": f.calibration.params.rest_full_s,
-             "anchor": f.calibration.audio.anchor, "offset_s": f.calibration.audio.offset_s,
-             "pairs": f.calibration.audio.n_pairs, "match_rate": f.calibration.audio.match_rate,
-             "fallback": f.calibration.audio.fallback}
-            for f in primary.folds
-        ],
+        folds=[_fold_row(f, data) for f in primary.folds],
         audio_diagnosis=calibration.calibrate_audio(
             [d.raws["audio"] for d in data],
             [d.gt_s(settings.boundary_definition) for d in data],
-            settings.pre_s,
+            settings,
         ) if data else None,
         shapley_by_tau={
             t: analysis.shapley(experiment.subset_values(rows, t), players)
@@ -406,7 +418,7 @@ def adequacy_text(report: Report) -> str:
         f"   v(∅) = {report.v_empty:.3f} (Grenzen im festen Abstand der mittleren Segmentlänge)"
         f"   ·   Zufallsniveau F1 = {report.chance:.3f} (gleichverteilte Grenzen, zweite Referenz)",
         f"   n = {report.n_sessions} Sessions   ·   Intervall: {METHOD_TEXT[method]}, "
-        f"{report.settings.ci_level:.0%}   ·   SESOI = {report.settings.sesoi:.3f}",
+        f"{report.settings.ci_level:.0%}   ·   SESOI = {report.settings.sesoi_value:.3f}",
         f"   größtes n_req über Shapley und Δ(k) = {need}   ·   größtes n_eq = {need_eq}",
         "   → Korpus groß genug, um jede Shapley-Differenz und jeden Sättigungsschritt der "
         "Größe SESOI mit 80 % Power zu zeigen." if report.n_sessions >= need else
@@ -422,11 +434,11 @@ def design_text(report: Report) -> str:
     s = report.settings
     lines = [
         f"   Entscheider: {s.decider}   ·   Kandidaten: {s.candidate_pool}"
-        f"{' (5-Hz-Raster, für alle Koalitionen identisch)' if s.candidate_pool == 'grid' else ''}"
+        f"{f' (Raster alle τ/5 = {s.cand_spacing_s:.3f} s, für alle Koalitionen identisch)' if s.candidate_pool == 'grid' else ''}"
         f"   ·   Grenzdefinition: {s.boundary_definition}   ·   Ereignismerkmale: {s.event_channels}",
-        f"   τ = {s.tau_primary_s:.3f} s ({s.tau_source})",
-        f"   SESOI = {s.sesoi:.4f} ({s.sesoi_source})",
-        f"   Mehrfachvergleich: {s.multiplicity}   ·   Audio-Peak: {s.audio_peak_mode}   ·   "
+        f"   τ = {s.tau_s:.3f} s ({s.tau_source})",
+        f"   SESOI = {s.sesoi_value:.4f} ({s.sesoi_source})",
+        f"   Mehrfachvergleich: {s.multiplicity}   ·   "
         f"Burst-Pause: {s.burst_pause_s:g} s   ·   ASR: {s.asr_alignment}",
         "   Schwelle je Koalition (innere GroupKFold; Mittel [min–max] über die Folds; "
         "OOB nur zum Vergleich):",
@@ -443,20 +455,28 @@ def calibration_text(report: Report) -> str:
     can be placed in time at all."""
     if not report.folds:
         return "   (keine Folds)"
-    rest = [f["rest_full_s"] for f in report.folds]
     anchors = [f["anchor"] for f in report.folds]
     offsets = [f["offset_s"] for f in report.folds]
     rates = [f["match_rate"] for f in report.folds]
     fallbacks = sum(1 for f in report.folds if f["fallback"])
-    values, counts = np.unique(rest, return_counts=True)
     lines = [
-        "   REST_FULL_S je Fold: " + ", ".join(f"{v:g} s × {c}" for v, c in zip(values, counts)),
         f"   Audio-Anker: Satzbeginn × {anchors.count('begin')}, Satzende × {anchors.count('end')}"
         f"   ·   d: Median {np.median(offsets):+.2f} s [{min(offsets):+.2f}, {max(offsets):+.2f}]"
         f"   ·   Rückfall (< 10 Paare): {fallbacks} Folds",
-        f"   Zuordnungsquote (OPERATION-Sätze mit Referenzgrenze im Suchbereich): "
+        f"   Zuordnungsquote (NEW_SUBGOAL-Sätze mit Referenzgrenze im Suchbereich): "
         f"Mittel {np.mean(rates):.2f} [{min(rates):.2f}–{max(rates):.2f}]",
     ]
+    pairs = [(f["video_theta"], f["video_min_rest_s"]) for f in report.folds]
+    lines.append("   Video θ, d je Fold (Stabilität): " + ", ".join(
+        f"θ={t:g}, d={d:g} s × {pairs.count((t, d))}" for t, d in sorted(set(pairs))))
+    lines.append("   Video je Fold (gehaltene Session: θ, d, Kandidaten-F1 auf den Trainingssessions, "
+                 "Änderungen, VLM-Aufrufe):")
+    for f in report.folds:
+        lines.append(
+            f"      {f['session'][:28]:28s}  θ={f['video_theta']:<6g} d={f['video_min_rest_s']:<4g} s  "
+            f"F1 {f['video_f1']:.3f}  ·  {f['video_changes']:3d} Änderungen  ·  "
+            f"{f['video_calls']:3d} Aufrufe"
+        )
     diag = report.audio_diagnosis
     if diag is not None and diag.offsets_s.get(diag.anchor):
         edges = (-np.inf, -2, -1, -0.5, 0, 0.5, 1, 2, 4, np.inf)
@@ -516,7 +536,7 @@ def contrasts_text(report: Report) -> str:
             f"{a.n_req:5d} / {b.n_req:<5d}        {a.n_eq:5d} / {b.n_eq:<5d}"
         )
     lines.append(
-        f"   SESOI = {report.settings.sesoi:.3f}; α = 0,05; Power 0,8. Die Korrektur nach "
+        f"   SESOI = {report.settings.sesoi_value:.3f}; α = 0,05; Power 0,8. Die Korrektur nach "
         "Nadeau–Bengio verdoppelt die benötigten Sessions ungefähr."
     )
     return "\n".join(lines)
@@ -565,7 +585,7 @@ def robustness_text(report: Report) -> str:
     lines.append("   F1 alle   " + "".join(f"{report.f1_all_by_tau[tau]:>8.3f}" for tau in taus))
     ranks = {tuple(sorted(players, key=lambda m: -report.shapley_by_tau[tau][m])) for tau in taus}
     lines.append(
-        f"   Shapley nach Recall (τ = {report.tau_s:.2f} s): "
+        f"   Shapley nach Recall (τ = {report.tau_s:.3f} s): "
         + ", ".join(f"{m} {v:+.3f}" for m, v in report.shapley_recall.items())
     )
     lines.append(
@@ -592,14 +612,11 @@ def reliability_text(report: Report) -> str:
     """The blind repetition of the annotation (C5)."""
     r = report.reliability
     if r is None:
-        return ("   (keine Wiederholungsannotation — Lauf 2 im Annotationsfenster anlegen; "
-                "τ und SESOI sind bis dahin gesetzt, nicht hergeleitet)")
-    t = r.tau
+        return "   (keine Wiederholungsannotation)"
     lines = [
-        f"   Retest-Sessions: {len(r.sessions)}   ·   gepaarte Grenzen: {t['n']}   ·   "
-        f"ungepaart: {r.unmatched}",
-        f"   |t1 − t2|: Mittel {t['mean']:.3f} s · Median {t['median']:.3f} s · "
-        f"P90 {t['p90']:.3f} s · P95 {t['p95']:.3f} s",
+        f"   Retest-Sessions: {len(r.sessions)}   ·   gepaarte Grenzen: {len(r.distances_s)}   ·   "
+        f"ungepaart: {r.unmatched} (Paarung bis ½ · kleinster Grenzabstand in Lauf 1)",
+        f"   τ = mittlere Abweichung |Δt| (Formel 3.1): {r.tau_s:.3f} s",
         "   Abstände: " + "  ".join(f"[{lo:g}, {hi:g}) s: {c}" for lo, hi, c in r.histogram()),
         f"   Konsistenz-F1 (τ = 0,2 … 1,0 s gemittelt): {r.consistency:.3f}",
     ]
@@ -609,8 +626,8 @@ def reliability_text(report: Report) -> str:
             f"Sessions): mean(|diff|) = {r.sesoi['mean_abs']:.4f} · sd(diff) = {r.sesoi['sd']:.4f}"
         )
     lines.append(
-        f"   Regeln: τ = {report.settings.tau_rule}, SESOI = {report.settings.sesoi_rule} "
-        "(Entscheidung N5); übernommen erst, wenn sie in die Einstellungen geschrieben sind."
+        f"   τ und SESOI dieses Laufs sind daraus gemessen (SESOI-Regel "
+        f"{report.settings.sesoi_rule}, Entscheidung N5)."
     )
     return "\n".join(lines)
 
@@ -621,13 +638,12 @@ def provenance_text(report: Report) -> str:
     retrieved = p.get("retrieved")
     unknown = p.get("unknown_keys") or {}
     hits = p.get("limit_hits") or []
-    calls = p.get("video_calls") or {}
+    calls = [f["video_calls"] for f in report.folds]
     lines = [
         "   Modelle: " + (", ".join(p.get("models") or []) or "–"),
         "   Abrufdatum: " + (f"{retrieved[0]} … {retrieved[1]}" if retrieved else "–"),
-        "   VLM-Aufrufe je Session: " + (
-            f"Median {int(np.median(list(calls.values())))}, max {max(calls.values())}"
-            if calls else "–"
+        "   VLM-Aufrufe je Session (gewähltes θ, d): " + (
+            f"Median {int(np.median(calls))}, max {max(calls)}" if calls else "–"
         ),
         "   _MAX_CALLS erreicht in: " + (", ".join(hits) if hits else "keiner Session"),
         f"   Unbekannte Tasten (→ „sonstige“): {sum(unknown.values())}"
@@ -652,7 +668,7 @@ def status_line(report: Report) -> str:
     """The one-line summary the window shows when a run completes."""
     f1 = report.f1_all.est if report.f1_all is not None else float("nan")
     return (
-        f"Fertig · {report.n_sessions} Sessions · τ = {report.tau_s:.2f} s · "
+        f"Fertig · {report.n_sessions} Sessions · τ = {report.tau_s:.3f} s · "
         f"F1 {f1:.3f} · v(∅) {report.v_empty:.3f} · Zufallsniveau {report.chance:.3f}"
         + (f"  ·  ⚠ Shapley-Effizienzfehler {report.efficiency_error:.1e}"
            if report.efficiency_error > 1e-9 else "")
@@ -668,7 +684,7 @@ def header_lines(report: Report, corpus_root: Path | None, created: str) -> list
         f"Sessions: {report.n_sessions}   ·   Grenzdefinition: {s.boundary_definition}",
         f"Verfahren: {s.decider}, Kandidaten {s.candidate_pool}, Schwelle über innere "
         "GroupKFold, v(∅) = informationslose Baseline, Leave-one-session-out",
-        f"τ = {s.tau_primary_s:.2f} s   ·   SESOI = {s.sesoi:.3f}   ·   Intervall "
+        f"τ = {s.tau_s:.3f} s   ·   SESOI = {s.sesoi_value:.3f}   ·   Intervall "
         f"{METHOD_TEXT[s.ci_method]} {s.ci_level:.0%}",
     ]
 

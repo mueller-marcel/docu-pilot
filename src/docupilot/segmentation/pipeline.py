@@ -5,7 +5,8 @@ Every modality module offers the same two stages:
 
     extract_raw(session, settings, *, use_cache, on_progress, is_cancelled)
         -> raw result (the expensive part: decoding, model calls)
-    render(raw, settings, params) -> BoundaryEvidence (cheap)
+    render(raw, settings, params) -> BoundaryEvidence (cheap; the video judges
+        its changes here, once per fold parameters, because they decide them)
 
 A fourth modality means a module with `MODALITY`, `raw_key`, `extract_raw` and
 `render`, named in _EXTRACTORS. No caller changes.
@@ -29,6 +30,10 @@ MODALITIES: tuple[str, ...] = tuple(m.MODALITY for m in _EXTRACTORS)
 
 _BY_NAME = {m.MODALITY: m for m in _EXTRACTORS}
 
+# Version of how a lane is drawn (evidence.py). Bump it when the curve shapes
+# change, so a lane stored with the old shapes is a miss rather than served.
+_CURVE_FORMAT = 2
+
 
 def render(
     modality: str, raw: Any, settings: Settings, params: FoldParams | None = None
@@ -46,10 +51,10 @@ def lane_key(modality: str, settings: Settings, params: FoldParams | None = None
     """
     params = params or FoldParams()
     return "|".join(str(v) for v in (
-        _BY_NAME[modality].raw_key(settings),
-        settings.boundary_definition, settings.spread_s, settings.audio_peak_mode,
-        settings.event_channels, params.rest_full_s, params.audio_anchor,
-        params.peak_offset_s,
+        _CURVE_FORMAT, _BY_NAME[modality].raw_key(settings),
+        settings.boundary_definition, settings.spread_s,
+        settings.event_channels, params.audio_anchor,
+        params.peak_offset_s, params.video_theta, params.video_min_rest_s,
     ))
 
 
@@ -105,10 +110,10 @@ def segment(
     session: RecordingSession,
     on_result: Callable[[str, BoundaryEvidence], None],
     on_error: Callable[[str, str], None],
+    settings: Settings,
     on_progress: Callable[[str, int, int], None] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     use_cache: bool = True,
-    settings: Settings | None = None,
 ) -> None:
     """
     Segment one recording for display, reporting each modality as it finishes.
@@ -117,10 +122,10 @@ def segment(
     shows a recording, not a fold. A lane already stored under the same key is
     loaded; otherwise it is drawn from the raw result and stored.
 
+    :param settings: with the τ the lanes are drawn with.
     :param use_cache: reuse the lanes, raw results and model verdicts cached in
         the session directory. False recomputes everything and stores nothing.
     """
-    settings = settings or Settings()
     pending = []
     for modality in MODALITIES:
         key = lane_key(modality, settings)
