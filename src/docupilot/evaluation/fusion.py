@@ -19,8 +19,7 @@ from scipy.signal import find_peaks
 from scipy.stats import rankdata
 
 from docupilot.config import (
-    CAND_HZ,
-    FEATURE_WINDOWS_S,
+    FEATURE_WINDOWS_TAU,
     FOREST_TREES,
     FOREST_TREES_INNER,
     GRID_HZ,
@@ -32,34 +31,27 @@ from docupilot.segmentation.evidence import BOUNDARY_THRESHOLD, BoundaryEvidence
 
 # Names of the feature columns one curve contributes, in order. The recipe is
 # the same for every curve: an asymmetric one would move the Shapley values by
-# design effort, not by information.
+# design effort, not by information. Windows are multiples of τ.
 FEATURE_NAMES: tuple[str, ...] = (
     "point",                                   # interpolated score at the candidate
-    *(f"max_{w:g}s" for w in FEATURE_WINDOWS_S),
-    "rank",                                    # session-relative rank of max_1s
+    *(f"max_{k:g}tau" for k in FEATURE_WINDOWS_TAU),
+    "rank",                                    # session-relative rank of max_1tau
 )
 FEATURES_PER_CURVE = len(FEATURE_NAMES)
-
-# Window whose maximum the rank feature is taken over.
-_RANK_WINDOW_S = 1.0
-
-# Minimum distance of two A0 predictions — matching is one-to-one, so two
-# predictions closer than this cannot both be hits.
-_RULE_DISTANCE_S = 1.0
 
 Evidence = Mapping[str, BoundaryEvidence]
 
 
 # ── Candidates ────────────────────────────────────────────────────────────────
 
-def grid_candidates(duration_s: float, hz: float = CAND_HZ) -> np.ndarray:
+def grid_candidates(duration_s: float, spacing_s: float) -> np.ndarray:
     """
-    Candidates every 1/hz seconds over the recording — the "grid" pool.
+    Candidates every `spacing_s` (τ/5) over the recording — the "grid" pool.
 
-    Depends on nothing but the recording's length, so it is bit-identical for
-    all eight coalitions of a session and carries no modality information.
+    Depends on nothing but the recording's length and τ, so it is bit-identical
+    for all eight coalitions of a session and carries no modality information.
     """
-    return np.arange(0.0, max(duration_s, 0.0), 1.0 / hz, dtype=np.float64)
+    return np.arange(0.0, max(duration_s, 0.0), spacing_s, dtype=np.float64)
 
 
 def candidate_times(evidence: Evidence, subset: Sequence[str]) -> np.ndarray:
@@ -95,30 +87,34 @@ def _window_max(times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray, window
     return np.where(hi > lo, out, 0.0)
 
 
-def curve_features(times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray) -> np.ndarray:
+def curve_features(
+    times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray, tau_s: float
+) -> np.ndarray:
     """One curve's block: (n_candidates, FEATURES_PER_CURVE)."""
     n = len(cand)
     block = np.zeros((n, FEATURES_PER_CURVE), dtype=np.float64)
     if n == 0 or len(times_s) == 0:
         return block
     block[:, 0] = np.interp(cand, times_s, curve, left=0.0, right=0.0)
-    for column, window in enumerate(FEATURE_WINDOWS_S, start=1):
-        block[:, column] = _window_max(times_s, curve, cand, window)
-    rank_source = _window_max(times_s, curve, cand, _RANK_WINDOW_S)
+    for column, k in enumerate(FEATURE_WINDOWS_TAU, start=1):
+        block[:, column] = _window_max(times_s, curve, cand, k * tau_s)
+    rank_source = _window_max(times_s, curve, cand, tau_s)
     # Average ranks scaled to (0, 1]: ties (many zeros) share a rank instead of
     # being ordered by position, which would leak the candidate index.
     block[:, -1] = rankdata(rank_source, method="average") / n
     return block
 
 
-def modality_features(ev: BoundaryEvidence, cand: np.ndarray) -> tuple[np.ndarray, list[str]]:
+def modality_features(
+    ev: BoundaryEvidence, cand: np.ndarray, tau_s: float
+) -> tuple[np.ndarray, list[str]]:
     """
     One modality's feature block over all its curves (one, or the event
     modality's sub-curves), with the column names.
     """
     blocks, names = [], []
     for channel, curve in ev.feature_curves().items():
-        blocks.append(curve_features(ev.times_s, curve, cand))
+        blocks.append(curve_features(ev.times_s, curve, cand, tau_s))
         names.extend(f"{channel}.{f}" for f in FEATURE_NAMES)
     return np.hstack(blocks) if blocks else np.zeros((len(cand), 0)), names
 
@@ -154,10 +150,12 @@ class FeatureTable:
         return self.matrix[:, columns]
 
 
-def feature_table(cand: np.ndarray, evidence: Evidence, modalities: Sequence[str]) -> FeatureTable:
+def feature_table(
+    cand: np.ndarray, evidence: Evidence, modalities: Sequence[str], tau_s: float
+) -> FeatureTable:
     """Features of the given modalities at the candidates, blocks in the given order."""
     return FeatureTable.from_blocks(
-        cand, [(m, *modality_features(evidence[m], cand)) for m in modalities]
+        cand, [(m, *modality_features(evidence[m], cand, tau_s)) for m in modalities]
     )
 
 
@@ -168,7 +166,7 @@ def label_candidates(times: np.ndarray, gt_s: Sequence[float], tol_s: float) -> 
     True for every candidate within `tol_s` of an annotated boundary.
 
     Deliberately not one-to-one: this is the training signal, not the score. On
-    the 5 Hz grid about eleven candidates around each boundary are positive.
+    the τ/5 grid eleven candidates around each boundary are positive.
     """
     if len(times) == 0:
         return np.zeros(0, dtype=bool)
@@ -251,12 +249,16 @@ class EmptyBaseline:
 class RuleFuser:
     """
     The untrained baseline A0 (C7): the maximum of the coalition's score curves,
-    its peaks of at least 0.5, at least 1 s apart. No training, no threshold.
+    its peaks of at least 0.5, at least τ apart — the NMS radius of the trained
+    deciders. No training, no threshold.
 
     Shows whether a finding rests on the modalities or only on the learned
     combiner. The event score is already the weighted maximum of its
     sub-curves (1 : 1 : 0.5).
     """
+
+    def __init__(self, distance_s: float) -> None:
+        self.distance_s = distance_s
 
     def predict(
         self,
@@ -278,7 +280,7 @@ class RuleFuser:
         index, _ = find_peaks(
             np.concatenate(([0.0], s, [0.0])),
             height=BOUNDARY_THRESHOLD,
-            distance=max(1, int(_RULE_DISTANCE_S * GRID_HZ)),
+            distance=max(1, int(self.distance_s * GRID_HZ)),
         )
         return [float(t[i - 1]) for i in index]
 

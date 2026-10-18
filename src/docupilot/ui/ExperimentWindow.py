@@ -29,7 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from docupilot.config import Settings, load_settings, save_settings
-from docupilot.evaluation import artifacts, corpus, experiment, reliability
+from docupilot.evaluation import artifacts, corpus, experiment
 from docupilot.evaluation import report as rep
 from docupilot.ui.formatting import format_bytes
 from docupilot.ui.report_view import ReportCharts, apply_report
@@ -109,9 +109,14 @@ class _ExperimentWorker(QObject):
                 )
                 return
 
+            settings = experiment.measure_tau(data, settings)
             primary = experiment.run(data, settings,
                                      on_progress=self._progress("Primärlauf, Fold"),
                                      is_cancelled=self._is_cancelled)
+            if self._cancelled:
+                self.failed.emit("Abgebrochen.")
+                return
+            settings = experiment.measure_sesoi(data, primary)
             variants = []
             for overrides in settings.variants:
                 if self._cancelled:
@@ -153,6 +158,7 @@ class ExperimentWindow(QDialog):
         self._settings_path: Path | None = None
         self._settings = Settings()
         self._end_available = False
+        self._can_run = False
         self._result: rep.Report | None = None
         self._thread: QThread | None = None
         self._worker: _ExperimentWorker | None = None
@@ -211,13 +217,11 @@ class ExperimentWindow(QDialog):
         self._delete_button = self._deletion_button()
         self._settings_button = self._button(
             "Einstellungen …", self._on_open_settings, enabled=False)
-        self._derive_button = self._button(
-            "τ/SESOI aus Retest übernehmen", self._on_derive_settings, enabled=False)
 
         top = QHBoxLayout()
         for button in (self._choose_button, self._run_button, self._cancel_button,
                        self._export_button, self._pdf_button, self._settings_button,
-                       self._derive_button, self._delete_button):
+                       self._delete_button):
             top.addWidget(button)
         top.addStretch()
         root.addLayout(top)
@@ -358,8 +362,8 @@ class ExperimentWindow(QDialog):
                 self._table.setItem(row, column, item)
 
         self._corpus_label.setText(corpus.describe(scanned))
-        settings_ok = self._reload_settings()
-        self._run_button.setEnabled(scanned.can_evaluate and settings_ok)
+        self._can_run = scanned.can_evaluate and self._reload_settings()
+        self._run_button.setEnabled(self._can_run)
         self._settings_button.setEnabled(True)
         self._set_deletion_enabled(True)
 
@@ -377,7 +381,7 @@ class ExperimentWindow(QDialog):
         self._settings_label.setText(
             f"Einstellungen ({path.name}{'' if path.exists() else ', Standardwerte'}): "
             f"{s.decider} · Kandidaten {s.candidate_pool} · Definition {s.boundary_definition} · "
-            f"τ = {s.tau_primary_s:g} s · SESOI = {s.sesoi:g} · Intervall {s.ci_method} "
+            f"τ und SESOI aus der Wiederholungsannotation · Intervall {s.ci_method} "
             f"{s.ci_level:.0%} · {len(s.variants)} Variante(n)"
         )
         return True
@@ -392,22 +396,6 @@ class ExperimentWindow(QDialog):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
         self._status.setText(
             f"{path.name} geöffnet — nach dem Speichern den Korpus neu wählen, um sie zu laden."
-        )
-
-    def _on_derive_settings(self) -> None:
-        """Write τ and the SESOI from the retest into the settings, with provenance."""
-        if self._result is None or self._result.reliability is None or self._settings_path is None:
-            return
-        derived = reliability.derive_settings(self._settings, self._result.reliability)
-        if derived == self._settings:
-            QMessageBox.information(self, "Retest", "Der Retest liefert noch keine neuen Werte.")
-            return
-        save_settings(derived, self._settings_path)
-        self._reload_settings()
-        QMessageBox.information(
-            self, "Retest",
-            f"τ = {derived.tau_primary_s:g} s und SESOI = {derived.sesoi:g} gespeichert.\n"
-            "Alle Ergebnisse ändern sich damit — die Auswertung neu starten."
         )
 
     # ── Run ──────────────────────────────────────────────────────────────
@@ -469,14 +457,13 @@ class ExperimentWindow(QDialog):
         self._reset_buttons()
         self._export_button.setEnabled(True)
         self._pdf_button.setEnabled(True)
-        self._derive_button.setEnabled(result.reliability is not None)
         self._progress.setRange(0, 1)
         self._progress.setValue(1)
         self._status.setText(rep.status_line(result))
         self._render(result)
 
     def _reset_buttons(self) -> None:
-        self._run_button.setEnabled(len(self._directories) >= 2)
+        self._run_button.setEnabled(self._can_run)
         self._choose_button.setEnabled(True)
         self._cancel_button.setEnabled(False)
         self._set_deletion_enabled(self._corpus_root is not None)
