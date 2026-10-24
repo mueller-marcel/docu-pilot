@@ -9,9 +9,11 @@ Two stages, so that calibrating a parameter never re-reads anything (C8):
     render(raw, ...)       three sub-curves drawn at the burst starts — cheap
 
 The sub-curves (C14), all placed at the FIRST event of a burst because the
-annotation marks the beginning of the next step:
+annotation marks the beginning of the next step. The primary run uses the
+rest alone (MA 3.2.5); the other two are the "all" sensitivity variant:
 
-    rest          how long the user was idle before the burst
+    rest          how long the user was idle before the burst, relative to
+                  the session's longest pause
     completion    the previous burst ended with a completion key (Enter,
                   Ctrl+Enter, Ctrl+S) not followed by an abort key (Esc,
                   Ctrl+Z) — the chunking signal of Rebmann & van der Aa
@@ -34,7 +36,6 @@ import numpy as np
 from docupilot.config import (
     DOUBLE_CLICK_S,
     EVENT_CHANNEL_WEIGHTS,
-    GRID_HZ,
     KEY_CLASSES,
     MODIFIER_KEYS,
     FoldParams,
@@ -44,7 +45,7 @@ from docupilot.recording.session import RecordingSession
 from docupilot.segmentation.evidence import (
     BOUNDARY_THRESHOLD,
     BoundaryEvidence,
-    apply_gaussian,
+    draw_gaussian,
     grid,
 )
 
@@ -263,7 +264,7 @@ def _cosine(a: dict[str, int], b: dict[str, int]) -> float | None:
 
 
 def transitions(
-    raw: EventsRaw, rest_full_s: float, definition: str = "begin"
+    raw: EventsRaw, definition: str = "begin"
 ) -> list[tuple[float, dict[str, float]]]:
     """
     One (position, sub-curve heights) per burst transition.
@@ -272,9 +273,14 @@ def transitions(
     the first burst's rest is measured from the start of the log.
     "end" (sensitivity only): at the last event of burst k, describing the step
     from k to k+1; the last burst's rest runs to the end of the log.
+
+    The rest height follows the duration of the pause (MA 3.2.5): the pause
+    divided by the session's longest one, so it lies in (0, 1], grows with
+    the pause and is normalised to the user's own pace without a parameter.
     """
     bursts = raw.bursts
     out: list[tuple[float, dict[str, float]]] = []
+    rests: list[float] = []
     for k, burst in enumerate(bursts):
         if definition == "begin":
             before = bursts[k - 1] if k > 0 else None
@@ -290,12 +296,15 @@ def transitions(
             _cosine(before.classes, after.classes) if before is not None and after is not None
             else None
         )
+        rests.append(rest)
         out.append((position, {
-            "rest": min(max(rest, 0.0) / rest_full_s, 1.0),
             "completion": 1.0 if before is not None and before.completed else 0.0,
             "class_change": 0.0 if similarity is None else 1.0 - similarity,
         }))
-    return out
+    longest = max(rests, default=0.0)
+    heights_rest = [max(r, 0.0) / longest if longest > 0 else 0.0 for r in rests]
+    return [(position, {"rest": float(r), **heights})
+            for (position, heights), r in zip(out, heights_rest)]
 
 
 def channel_names(settings: Settings) -> tuple[str, ...]:
@@ -304,32 +313,30 @@ def channel_names(settings: Settings) -> tuple[str, ...]:
 
 
 def render(
-    raw: EventsRaw, settings: Settings | None = None, params: FoldParams | None = None
+    raw: EventsRaw, settings: Settings, params: FoldParams | None = None
 ) -> BoundaryEvidence:
     """
-    Draw the bursts onto the sub-curves.
+    Draw the bursts onto the sub-curves: per transition and sub-curve a bell
+    at the transition's time, height = the sub-curve's value, as wide as the
+    tolerance window (σ = τ/3, cut off at ±τ).
 
     The displayed score — and what the rule decider reads — is the weighted
     maximum of the sub-curves (1 : 1 : 0.5, a priori). A boundary is committed
     where it reaches BOUNDARY_THRESHOLD.
 
-    :param params: supplies REST_FULL_S, calibrated in-fold.
+    :param params: unused — the event curves have no in-fold parameter.
     """
-    settings = settings or Settings()
-    params = params or FoldParams()
     times_s = grid(raw.log_end_s)
     if not raw.bursts or len(times_s) == 0:
         return BoundaryEvidence.empty()
 
     names = channel_names(settings)
     curves = {name: np.zeros(len(times_s), dtype=np.float32) for name in names}
-    spread = max(1, int(settings.spread_s * GRID_HZ))
 
     boundaries_s: list[float] = []
-    for position, heights in transitions(raw, params.rest_full_s, settings.boundary_definition):
-        center = min(max(int(round(position * GRID_HZ)), 0), len(times_s) - 1)
+    for position, heights in transitions(raw, settings.boundary_definition):
         for name in names:
-            apply_gaussian(curves[name], center, heights[name], spread)
+            draw_gaussian(curves[name], times_s, position, heights[name], settings.spread_s)
         combined = max(EVENT_CHANNEL_WEIGHTS[n] * heights[n] for n in names)
         if combined >= BOUNDARY_THRESHOLD:
             boundaries_s.append(float(position))

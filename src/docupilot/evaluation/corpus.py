@@ -79,12 +79,16 @@ class CorpusScan:
         return self.root / SETTINGS_FILE
 
     @property
+    def enough_sessions(self) -> bool:
+        """One session cannot provide a fold that excludes the session being scored."""
+        return len(self.usable) >= 2
+
+    @property
     def can_evaluate(self) -> bool:
         """
-        Whether the corpus supports leave-one-session-out at all: one session
-        cannot provide a fold that excludes the session being scored.
+        Whether a run can start: leave-one-session-out needs two sessions.
         """
-        return len(self.usable) >= 2
+        return self.enough_sessions
 
 
 def describe(scan: CorpusScan) -> str:
@@ -109,7 +113,7 @@ def describe(scan: CorpusScan) -> str:
         if scan.end_definition_available else
         "„Ende“ nicht in allen Sessions — kein Definitions-Sensitivitätslauf"
     )
-    if not scan.can_evaluate:
+    if not scan.enough_sessions:
         parts.append("⚠ mindestens zwei Sessions nötig (Leave-one-session-out)")
     return "  ·  ".join(parts)
 

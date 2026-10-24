@@ -4,7 +4,7 @@ What is kept beside a recording so a re-open is free.
 Two layers, because a modality's result depends on two different things:
 
     raw results   what the MODELS and the decoders produced (<modality>_raw.json,
-                  video_activity.npz). Expensive, and independent of the
+                  video_ssim.npz). Expensive, and independent of the
                   boundary definition and of every in-fold parameter.
     lanes         the curve drawn from a raw result with one set of settings
                   (<modality>_evidence.npz). Cheap; kept for the feature dialog.

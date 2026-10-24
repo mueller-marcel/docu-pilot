@@ -70,41 +70,6 @@ def efficiency_error(
     return abs(sum(phi.values()) - expected)
 
 
-def interaction(values: Values, players: Sequence[str]) -> dict[tuple[str, str], float]:
-    """
-    Pairwise synergy (positive) or redundancy (negative) between modalities.
-
-    The Shapley interaction index (Grabisch & Roubens 1999). Shapley values alone
-    hide this: they say how much each modality contributes, not whether two of
-    them are saying the same thing — which is exactly the redundancy question.
-
-    :param values: score of every subset.
-    :param players: the modalities.
-    :return: one value per unordered pair.
-    """
-    n = len(players)
-    result: dict[tuple[str, str], float] = {}
-
-    for first, second in combinations(players, 2):
-        rest = [p for p in players if p not in (first, second)]
-        total = 0.0
-        for size in range(len(rest) + 1):
-            weight = (
-                factorial(size) * factorial(n - size - 2) / factorial(n - 1)
-            )
-            for combo in combinations(rest, size):
-                s = frozenset(combo)
-                total += weight * (
-                    values[s | {first, second}]
-                    - values[s | {first}]
-                    - values[s | {second}]
-                    + values[s]
-                )
-        result[(first, second)] = total
-
-    return result
-
-
 def saturation(values: Values, players: Sequence[str]) -> dict[int, float]:
     """
     Mean score per number of modalities involved — the saturation curve.

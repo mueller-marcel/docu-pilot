@@ -9,9 +9,8 @@ the annotated boundaries, then attribute the result to the modalities.
     fusion.py          grid candidates, features, baseline v(∅), deciders, threshold
     calibration.py     the parameters calibrated inside each outer fold
     experiment.py      every coalition on every session, leave-one-session-out
-    analysis.py        Shapley values, interaction index, saturation curve
-    statistics.py      per-session intervals, class rule, sample size per contrast
-    reliability.py     test-retest of the annotation: τ and SESOI
+    analysis.py        Shapley values, saturation curve
+    statistics.py      per-session 95 % intervals, SESOI class rule
     alignment.py       Whisper against WhisperX sentence starts (C10)
     repeatability.py   how stable the model verdicts are without the cache
     report.py          the finished evaluation and the sentences that state it
@@ -19,7 +18,6 @@ the annotated boundaries, then attribute the result to the modalities.
 
 from docupilot.evaluation.analysis import (
     efficiency_error,
-    interaction,
     marginal_gain,
     saturation,
     shapley,
@@ -50,7 +48,6 @@ __all__ = [
     "duration_s",
     "efficiency_error",
     "ground_truth_s",
-    "interaction",
     "load",
     "marginal_gain",
     "match",

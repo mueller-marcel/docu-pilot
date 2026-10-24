@@ -4,7 +4,8 @@ client, and the on-disk verdict cache they both keep beside the recording.
 
 Utilities only — no modality DATA passes through here, so the extractors'
 independence (see the package docstring) is untouched: audio_scoring and
-video_scoring share a transport and a cache format, never evidence.
+video_scoring share a transport, a cache format, the model and the boundary
+definition they judge against, never evidence.
 """
 
 from __future__ import annotations
@@ -47,8 +48,37 @@ def _load_dotenv() -> None:
         pass
 
 
-# At import time, before any module reads its DOCUPILOT_* variable.
+# At import time, before MODEL below reads its DOCUPILOT_* variable.
 _load_dotenv()
+
+# The ONE model both judged stages use. A single variable, not one per
+# modality: two models would judge the same boundary question with different
+# abilities, and the Shapley comparison would measure the models, not the
+# modalities. Different models get separate cache entries.
+MODEL = os.environ.get("DOCUPILOT_MODEL", "claude-sonnet-5")
+
+# The ONE definition both prompts judge against — the sub-goal after Kurby &
+# Zacks (2008), as the thesis uses it (MA 2.2, 3.1.3): an activity is perceived
+# as a hierarchy, the task divided into sub-goals, each carried out by finer
+# actions; a boundary lies where the sub-goal changes, at its first perceivable
+# hint; a correction changes no sub-goal. Kept here so the two prompts cannot
+# drift apart; changing it changes both prompts, so bump both PROMPT_VERSIONs.
+# The examples are invented and app-agnostic — never taken from a recording.
+SUBGOAL_DEFINITION = """\
+People perceive an ongoing activity as a hierarchy (Kurby & Zacks 2008): the
+whole task is divided into sub-goals, and each sub-goal is carried out by a
+sequence of finer actions that all serve it. In a task like "prepare a report",
+sub-goals would be "insert a chart", "format the heading" or "save the file under
+a new name"; clicking, typing, opening a menu or a dialog, scrolling or checking
+a result are finer actions INSIDE one of them, not sub-goals of their own.
+Correcting a mistake, such as a typo, does not change the sub-goal.
+
+A boundary lies where the sub-goal CHANGES: where the person stops pursuing one
+sub-goal and starts pursuing the next. It is placed at the first perceivable
+hint of the new sub-goal - a sentence announcing it, or the first screen change
+made for it. Opening a menu or a dialog is no change by itself; it marks one only
+when it is the first action serving a new sub-goal. The first sub-goal of a
+recording is a change as well: it follows the idle start."""
 
 _CLIENT = None
 

@@ -11,6 +11,7 @@ candidate pool is a neutral grid, identical for every coalition (C2).
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -19,47 +20,44 @@ from scipy.signal import find_peaks
 from scipy.stats import rankdata
 
 from docupilot.config import (
-    CAND_HZ,
-    FEATURE_WINDOWS_S,
-    FOREST_TREES,
-    FOREST_TREES_INNER,
+    FEATURE_WINDOWS_TAU,
+    FOREST_MAX_SAMPLES,
+    FOREST_MIN_SAMPLES_LEAF,
+    FOREST_TREES_MAX,
+    FOREST_TREES_STEP,
     GRID_HZ,
     INNER_FOLDS,
     THRESHOLD_GRID,
+    TREES_HOLDOUT_SHARE,
+    TREES_STABLE_STEPS,
+    TREES_STABLE_TOL,
 )
 from docupilot.evaluation import metrics
 from docupilot.segmentation.evidence import BOUNDARY_THRESHOLD, BoundaryEvidence
 
 # Names of the feature columns one curve contributes, in order. The recipe is
 # the same for every curve: an asymmetric one would move the Shapley values by
-# design effort, not by information.
+# design effort, not by information. Windows are multiples of τ.
 FEATURE_NAMES: tuple[str, ...] = (
     "point",                                   # interpolated score at the candidate
-    *(f"max_{w:g}s" for w in FEATURE_WINDOWS_S),
-    "rank",                                    # session-relative rank of max_1s
+    *(f"max_{k:g}tau" for k in FEATURE_WINDOWS_TAU),
+    "rank",                                    # session-relative rank of max_1tau
 )
 FEATURES_PER_CURVE = len(FEATURE_NAMES)
-
-# Window whose maximum the rank feature is taken over.
-_RANK_WINDOW_S = 1.0
-
-# Minimum distance of two A0 predictions — matching is one-to-one, so two
-# predictions closer than this cannot both be hits.
-_RULE_DISTANCE_S = 1.0
 
 Evidence = Mapping[str, BoundaryEvidence]
 
 
 # ── Candidates ────────────────────────────────────────────────────────────────
 
-def grid_candidates(duration_s: float, hz: float = CAND_HZ) -> np.ndarray:
+def grid_candidates(duration_s: float, spacing_s: float) -> np.ndarray:
     """
-    Candidates every 1/hz seconds over the recording — the "grid" pool.
+    Candidates every `spacing_s` (τ/5) over the recording — the "grid" pool.
 
-    Depends on nothing but the recording's length, so it is bit-identical for
-    all eight coalitions of a session and carries no modality information.
+    Depends on nothing but the recording's length and τ, so it is bit-identical
+    for all eight coalitions of a session and carries no modality information.
     """
-    return np.arange(0.0, max(duration_s, 0.0), 1.0 / hz, dtype=np.float64)
+    return np.arange(0.0, max(duration_s, 0.0), spacing_s, dtype=np.float64)
 
 
 def candidate_times(evidence: Evidence, subset: Sequence[str]) -> np.ndarray:
@@ -95,30 +93,34 @@ def _window_max(times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray, window
     return np.where(hi > lo, out, 0.0)
 
 
-def curve_features(times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray) -> np.ndarray:
+def curve_features(
+    times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray, tau_s: float
+) -> np.ndarray:
     """One curve's block: (n_candidates, FEATURES_PER_CURVE)."""
     n = len(cand)
     block = np.zeros((n, FEATURES_PER_CURVE), dtype=np.float64)
     if n == 0 or len(times_s) == 0:
         return block
     block[:, 0] = np.interp(cand, times_s, curve, left=0.0, right=0.0)
-    for column, window in enumerate(FEATURE_WINDOWS_S, start=1):
-        block[:, column] = _window_max(times_s, curve, cand, window)
-    rank_source = _window_max(times_s, curve, cand, _RANK_WINDOW_S)
+    for column, k in enumerate(FEATURE_WINDOWS_TAU, start=1):
+        block[:, column] = _window_max(times_s, curve, cand, k * tau_s)
+    rank_source = _window_max(times_s, curve, cand, tau_s)
     # Average ranks scaled to (0, 1]: ties (many zeros) share a rank instead of
     # being ordered by position, which would leak the candidate index.
     block[:, -1] = rankdata(rank_source, method="average") / n
     return block
 
 
-def modality_features(ev: BoundaryEvidence, cand: np.ndarray) -> tuple[np.ndarray, list[str]]:
+def modality_features(
+    ev: BoundaryEvidence, cand: np.ndarray, tau_s: float
+) -> tuple[np.ndarray, list[str]]:
     """
     One modality's feature block over all its curves (one, or the event
     modality's sub-curves), with the column names.
     """
     blocks, names = [], []
     for channel, curve in ev.feature_curves().items():
-        blocks.append(curve_features(ev.times_s, curve, cand))
+        blocks.append(curve_features(ev.times_s, curve, cand, tau_s))
         names.extend(f"{channel}.{f}" for f in FEATURE_NAMES)
     return np.hstack(blocks) if blocks else np.zeros((len(cand), 0)), names
 
@@ -154,10 +156,12 @@ class FeatureTable:
         return self.matrix[:, columns]
 
 
-def feature_table(cand: np.ndarray, evidence: Evidence, modalities: Sequence[str]) -> FeatureTable:
+def feature_table(
+    cand: np.ndarray, evidence: Evidence, modalities: Sequence[str], tau_s: float
+) -> FeatureTable:
     """Features of the given modalities at the candidates, blocks in the given order."""
     return FeatureTable.from_blocks(
-        cand, [(m, *modality_features(evidence[m], cand)) for m in modalities]
+        cand, [(m, *modality_features(evidence[m], cand, tau_s)) for m in modalities]
     )
 
 
@@ -168,7 +172,7 @@ def label_candidates(times: np.ndarray, gt_s: Sequence[float], tol_s: float) -> 
     True for every candidate within `tol_s` of an annotated boundary.
 
     Deliberately not one-to-one: this is the training signal, not the score. On
-    the 5 Hz grid about eleven candidates around each boundary are positive.
+    the τ/5 grid eleven candidates around each boundary are positive.
     """
     if len(times) == 0:
         return np.zeros(0, dtype=bool)
@@ -251,12 +255,16 @@ class EmptyBaseline:
 class RuleFuser:
     """
     The untrained baseline A0 (C7): the maximum of the coalition's score curves,
-    its peaks of at least 0.5, at least 1 s apart. No training, no threshold.
+    its peaks of at least 0.5, at least NMS_S apart — the NMS radius of the
+    trained deciders. No training, no threshold.
 
     Shows whether a finding rests on the modalities or only on the learned
     combiner. The event score is already the weighted maximum of its
     sub-curves (1 : 1 : 0.5).
     """
+
+    def __init__(self, distance_s: float) -> None:
+        self.distance_s = distance_s
 
     def predict(
         self,
@@ -278,7 +286,7 @@ class RuleFuser:
         index, _ = find_peaks(
             np.concatenate(([0.0], s, [0.0])),
             height=BOUNDARY_THRESHOLD,
-            distance=max(1, int(_RULE_DISTANCE_S * GRID_HZ)),
+            distance=max(1, int(self.distance_s * GRID_HZ)),
         )
         return [float(t[i - 1]) for i in index]
 
@@ -301,21 +309,18 @@ class Fuser:
     weights because the grid is ~1:15 imbalanced.
     """
 
-    def __init__(self, kind: str, *, n_estimators: int | None = None, seed: int = 0,
-                 oob: bool = False) -> None:
+    def __init__(self, kind: str, *, n_estimators: int | None = None, seed: int = 0) -> None:
+        """:param n_estimators: the fold's forest size (tree_count)."""
         self.kind = kind
-        self._n_estimators = n_estimators or FOREST_TREES
+        self._n_estimators = n_estimators or FOREST_TREES_MAX
         self._seed = seed
-        self._oob = oob
         self._model = None
-        self.oob_proba: np.ndarray | None = None
 
     def fit(self, features: np.ndarray, labels: np.ndarray) -> Fuser:
         classes = np.unique(labels)
         if len(classes) < 2:
             value = float(classes[0]) if len(classes) else 0.0
             self._model = _Constant(value)
-            self.oob_proba = np.full(len(labels), value)
             return self
 
         if self.kind == "forest":
@@ -324,13 +329,11 @@ class Fuser:
             self._model = RandomForestClassifier(
                 n_estimators=self._n_estimators,
                 class_weight="balanced",
+                min_samples_leaf=FOREST_MIN_SAMPLES_LEAF,
+                max_samples=FOREST_MAX_SAMPLES,
                 random_state=self._seed,
-                oob_score=self._oob,
                 n_jobs=-1,
             ).fit(features, labels)
-            if self._oob:
-                oob = self._model.oob_decision_function_[:, 1]
-                self.oob_proba = np.where(np.isnan(oob), 0.5, oob)
         elif self.kind == "logreg":
             from sklearn.linear_model import LogisticRegression
             from sklearn.pipeline import make_pipeline
@@ -432,23 +435,56 @@ def choose_threshold(
     )
 
 
-def oob_threshold(
-    sessions: Sequence[Prepared],
-    oob: np.ndarray,
-    post: Callable[[np.ndarray, np.ndarray, float], list[float]],
-    tau_s: float,
-) -> float:
+def tree_count(sessions: Sequence[Prepared], seed: int = 0) -> tuple[int, list[float]]:
     """
-    The threshold the former out-of-bag calibration would have chosen — logged
-    as a comparison column, never used.
+    The number of trees after which the forest's error has settled (MA 3.3.1,
+    Hastie et al. 2009, p. 593): high with few trees, then falling; once it
+    stays flat there are enough. Grown with warm start, so the whole search
+    costs about one forest of the final size.
+
+    The error is measured on held-out training SESSIONS (TREES_HOLDOUT_SHARE
+    of them, drawn with `seed`) rather than on out-of-bag rows — see
+    config.FOREST_TREES_STEP for why OOB is biased on the grid — as the Brier
+    score, which needs no decision threshold.
+
+    :param sessions: the outer fold's training sessions only.
+    :return: (tree count, holdout error after each step).
     """
-    folds, offset = [], 0
-    for s in sessions:
-        folds.append((s.times, oob[offset:offset + len(s.times)], s.gt_s))
-        offset += len(s.times)
-    return best_threshold(folds, post, tau_s)
+    from sklearn.ensemble import RandomForestClassifier
 
+    order = np.random.default_rng(seed).permutation(len(sessions))
+    n_val = max(1, int(round(TREES_HOLDOUT_SHARE * len(sessions))))
+    val, fit = order[:n_val], order[n_val:]
+    if len(fit) == 0:
+        return FOREST_TREES_STEP, []
+    x_fit = np.vstack([sessions[i].features for i in fit])
+    y_fit = np.concatenate([sessions[i].labels for i in fit])
+    x_val = np.vstack([sessions[i].features for i in val])
+    y_val = np.concatenate([sessions[i].labels for i in val]).astype(np.float64)
+    if len(np.unique(y_fit)) < 2 or len(y_val) == 0:
+        return FOREST_TREES_STEP, []
 
-def trees_inner(kind: str) -> int:
-    """Inner fits may be cheaper; only the forest has a size to reduce."""
-    return FOREST_TREES_INNER if kind == "forest" else FOREST_TREES
+    forest = RandomForestClassifier(
+        n_estimators=FOREST_TREES_STEP, class_weight="balanced",
+        min_samples_leaf=FOREST_MIN_SAMPLES_LEAF, max_samples=FOREST_MAX_SAMPLES,
+        random_state=seed, warm_start=True, n_jobs=-1,
+    )
+    errors: list[float] = []
+    flat = 0
+    n = FOREST_TREES_STEP
+    while True:
+        forest.set_params(n_estimators=n)
+        with warnings.catch_warnings():
+            # warm_start keeps the class weights of the first fit — same data,
+            # so the same weights; sklearn warns regardless.
+            warnings.simplefilter("ignore", UserWarning)
+            forest.fit(x_fit, y_fit)
+        p = forest.predict_proba(x_val)[:, 1]
+        errors.append(float(np.mean((p - y_val) ** 2)))
+        if len(errors) >= 2 and abs(errors[-1] - errors[-2]) < TREES_STABLE_TOL:
+            flat += 1
+        else:
+            flat = 0
+        if flat >= TREES_STABLE_STEPS or n >= FOREST_TREES_MAX:
+            return n, errors
+        n += FOREST_TREES_STEP

@@ -6,7 +6,7 @@ make a run reproducible, but say nothing about whether the SAME question gets
 the same answer twice. This script bypasses the caches: it judges a few
 sessions several times and reports
 
-    agreement    share of dwells / sentences with the identical category in
+    agreement    share of screen changes / sentences with the identical category in
                  every run
     p spread     mean (max − min) of p_boundary over the runs
     F1 range     spread of the single modality's F1 (rule decider A0) over the runs
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from docupilot.config import Settings
+from docupilot.config import NMS_S, FoldParams, Settings
 from docupilot.evaluation import corpus, dataset, metrics
 from docupilot.evaluation.fusion import EmptyBaseline, RuleFuser
 from docupilot.recording.session import RecordingSession
@@ -66,34 +66,47 @@ def agreement(runs: Sequence[dict[object, tuple[str, float]]]) -> tuple[float, f
 
 
 def _f1(evidence, modality: str, gt: Sequence[float], duration: float, tau: float) -> float:
-    predicted = RuleFuser().predict({modality: evidence}, [modality], duration,
-                                    EmptyBaseline(float("inf")))
+    predicted = RuleFuser(NMS_S).predict({modality: evidence}, [modality], duration,
+                                       EmptyBaseline(float("inf")))
     return metrics.match(gt, predicted, tau).f1
+
+
+def measured_settings(directories: Sequence[Path]) -> Settings:
+    """
+    The default settings; τ is a priori (config.TOLERANCE_S), so the corpus
+    does not change them.
+    """
+    return Settings()
 
 
 def measure(
     directory: Path,
+    settings: Settings,
     runs: int = 3,
-    settings: Settings | None = None,
     log: Callable[[str], None] = print,
 ) -> list[Repeatability]:
-    """Judge one session `runs` times per model-judged modality, caches bypassed."""
-    settings = settings or Settings()
+    """
+    Judge one session `runs` times per model-judged modality, caches bypassed.
+
+    :param settings: the run's settings (measured_settings).
+    """
     session = RecordingSession.from_directory(directory)
     duration = dataset.duration_s(session)
     gt = dataset.ground_truth_s(session, settings.boundary_definition, 1, duration)
-    tau = settings.tau_primary_s
+    tau = settings.tau_s
     out = []
 
     video_runs, video_f1, video_models, video_dates = [], [], set(), set()
     for i in range(runs):
         log(f"  {directory.name}: Video, Lauf {i + 1}/{runs}")
         raw = video.extract_raw(session, settings, reuse_verdicts=False)
-        video_runs.append({v.dwell_start: (v.judgement.category, v.judgement.p_boundary)
-                           for v in raw.verdicts})
-        video_f1.append(_f1(video.render(raw, settings), "video", gt, duration, tau))
-        video_models.update(v.judgement.model for v in raw.verdicts)
-        video_dates.update(v.judgement.retrieved_at[:10] for v in raw.verdicts)
+        params = FoldParams()
+        verdicts = video.judge_changes(raw, params.video_theta, params.video_min_rest_s).verdicts
+        video_runs.append({v.onset: (v.judgement.category, v.judgement.p_boundary)
+                           for v in verdicts})
+        video_f1.append(_f1(video.render(raw, settings, params), "video", gt, duration, tau))
+        video_models.update(v.judgement.model for v in verdicts)
+        video_dates.update(v.judgement.retrieved_at[:10] for v in verdicts)
     same, spread = agreement(video_runs)
     out.append(Repeatability(directory.name, "video", same, spread, tuple(video_f1),
                              tuple(sorted(video_models)), tuple(sorted(video_dates))))
@@ -121,11 +134,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     usable = corpus.scan(args.corpus).usable
+    settings = measured_settings(usable)
+    print(f"τ = {settings.tau_s:.3f} s ({settings.tau_source})")
     rng = np.random.default_rng(args.seed)
     picked = sorted(rng.choice(len(usable), size=min(args.sessions, len(usable)), replace=False))
     print(f"Sessions (Seed {args.seed}): " + ", ".join(usable[i].name for i in picked))
 
-    results = [r for i in picked for r in measure(usable[i], args.runs)]
+    results = [r for i in picked for r in measure(usable[i], settings, args.runs)]
     print("\nSession            Modalität  Übereinst.  p-Spanne  F1-Spanne  Modell / Abruf")
     for r in results:
         print(f"{r.session:18s} {r.modality:9s}  {r.agreement:9.2f}  {r.p_spread:8.3f}  "
