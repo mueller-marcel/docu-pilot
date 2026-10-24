@@ -289,7 +289,7 @@ def judge_changes(raw: VideoRaw, theta: float, min_rest_s: float) -> Judged:
     if not vlm.is_available():
         raise RuntimeError(
             f"Cloud-Modell '{vlm.MODEL}' nicht nutzbar. Benötigt:\n"
-            "  poetry install         (Paket 'anthropic')\n"
+            "  uv sync                (Paket 'anthropic')\n"
             "  ANTHROPIC_API_KEY=...  oder  ant auth login\n\n"
             "Ohne VLM kann die Video-Modalität keine Handlungsgrenzen bestimmen — "
             "ein rein struktureller Score misst Pixelmenge, nicht Bedeutung."

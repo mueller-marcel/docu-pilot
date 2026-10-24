@@ -82,8 +82,8 @@ class _FeatureWorker(QObject):
             self._session,
             on_result=self._keep,
             on_error=self.lane_failed.emit,
-            # A single recording belongs to no corpus with a retest: its lanes
-            # are drawn with the display τ, never used by an evaluation.
+            # A single recording belongs to no corpus: its lanes are drawn
+            # with the display τ, never used by an evaluation.
             settings=Settings(tau_primary_s=DISPLAY_TAU_S, tau_source="Anzeige"),
             on_progress=self.progress.emit,
             is_cancelled=lambda: self._cancelled,

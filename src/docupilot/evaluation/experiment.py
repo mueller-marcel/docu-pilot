@@ -446,11 +446,6 @@ def paired_metric(
     return {k: {s: float(np.mean(v)) for s, v in per.items()} for k, per in acc.items()}
 
 
-def taus_in(rows: Sequence[dict]) -> list[float]:
-    """The tolerances a result table was scored at, ascending."""
-    return sorted({row["tau_s"] for row in rows})
-
-
 def write_csv(rows: Sequence[dict], path: Path) -> None:
     """Write the tidy table; figures for the thesis are generated from this file."""
     if not rows:

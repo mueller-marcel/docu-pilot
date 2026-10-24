@@ -156,15 +156,6 @@ class FeatureTable:
         return self.matrix[:, columns]
 
 
-def feature_table(
-    cand: np.ndarray, evidence: Evidence, modalities: Sequence[str], tau_s: float
-) -> FeatureTable:
-    """Features of the given modalities at the candidates, blocks in the given order."""
-    return FeatureTable.from_blocks(
-        cand, [(m, *modality_features(evidence[m], cand, tau_s)) for m in modalities]
-    )
-
-
 # ── Labels and decisions ──────────────────────────────────────────────────────
 
 def label_candidates(times: np.ndarray, gt_s: Sequence[float], tol_s: float) -> np.ndarray:

@@ -48,9 +48,6 @@ _WHISPER_MODEL = "small"
 
 _SPACY_MODELS = ("de_core_news_lg", "de_core_news_md", "de_core_news_sm")
 
-# The category of a sentence that announces the first step toward a new sub-goal.
-NEW_SUBGOAL = "NEW_SUBGOAL"
-
 # What the LLM said about the narration, kept beside the recording.
 VERDICT_CACHE_FILE = "audio_llm_cache.json"
 
@@ -342,7 +339,7 @@ def extract_raw(
     if not judge.is_available():
         raise RuntimeError(
             f"LLM-Backend '{judge.MODEL}' nicht nutzbar. Benötigt:\n"
-            "  poetry install         (Paket 'anthropic')\n"
+            "  uv sync                (Paket 'anthropic')\n"
             "  ANTHROPIC_API_KEY=...  oder  ant auth login\n\n"
             "Ohne semantisches Urteil kann die Audio-Modalität keine "
             "Handlungsgrenzen bestimmen — jede Ansage wäre gleich viel wert und "

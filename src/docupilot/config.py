@@ -6,8 +6,7 @@ A parameter is either fixed before any label was seen (a priori, technical,
 set), frozen because re-tuning it would cost model calls, measured from the
 corpus' annotation (the SESOI from the reference), or
 calibrated inside each outer fold on
-that fold's TRAINING sessions only. `PARAMETERS` states which, and the report
-prints that table.
+that fold's TRAINING sessions only. The comment above each value says which.
 
 `Settings` holds the switches of one run.
 The switches are stored as JSON beside the corpus (`SETTINGS_FILE`) so a run
@@ -51,7 +50,7 @@ TOLERANCE_S = 1.0
 NMS_S = 2.0
 
 # Candidates of the "grid" pool per τ: spacing τ/5, so the grid stays far below
-# the tolerance whatever τ the retest yields. Technical.
+# the tolerance whatever τ is set to. Technical.
 CAND_PER_TAU = 5
 
 # Feature windows around a candidate, in multiples of τ: ±0.5τ, ±τ, ±2τ. The
@@ -108,7 +107,7 @@ EVENT_CHANNEL_WEIGHTS: dict[str, float] = {"rest": 1.0, "completion": 1.0, "clas
 GT_EDGE_S = 0.3        # boundaries in the first/last 0.3 s are dropped
 GT_MERGE_S = 0.1       # boundaries closer than this are merged
 
-# Primary annotation run; run 2 is the blind test-retest repetition (C5).
+# Primary annotation run, the reference; later runs are blind repetitions.
 PRIMARY_RUN = 1
 
 # Version of the annotation guideline (N3), stored with every boundary. Bump it
@@ -153,72 +152,6 @@ MODIFIER_KEYS: dict[str, tuple[str, ...]] = {
 # a priori.
 DOUBLE_CLICK_S = 0.5
 
-# ── Parameter table (C8) ──────────────────────────────────────────────────────
-
-A_PRIORI = "a priori"
-TECHNICAL = "technisch"
-SET = "gesetzt"
-MEASURED = "gemessen"
-IN_FOLD = "in-fold"
-
-
-@dataclass(frozen=True)
-class Parameter:
-    """One row of the parameter table in the report's appendix."""
-
-    name: str
-    value: str
-    kind: str
-    handling: str
-
-
-PARAMETERS: tuple[Parameter, ...] = (
-    Parameter("BURST_PAUSE_S", "2,0 s", A_PRIORI,
-              "Literaturwert der Schreibprozessforschung (Wengelin 2006); Sensitivität 1/2/3 s"),
-    Parameter("τ (Toleranz)", "1,0 s", A_PRIORI,
-              "GEBD-Protokoll (Shou et al. 2021, 0,2 … 1,0 s); Toleranz-Sweep 0,25 … 3 s "
-              "als Robustheit"),
-    Parameter("SESOI", "Abschnitt 3.3.3", MEASURED,
-              "eine weitere gefundene Grenze: Mittel von 1/n_s über die Sessions der "
-              "Referenzannotation (Lakens et al. 2018, kleinste Einheit der Messung); vor "
-              "dem Lauf, unabhängig vom Ergebnis"),
-    Parameter("SPREAD_S (σ)", "= τ/3", A_PRIORI,
-              "Glocke eines Zeitpunkt-Hinweises hat die Breite des Toleranzfensters: "
-              "bei ±3σ = ±τ abgeschnitten"),
-    Parameter("LABEL_TOL_S", "= τ", A_PRIORI, "an τ gebunden"),
-    Parameter("NMS_S (auch Abstand A0)", "2,0 s", A_PRIORI,
-              "Granularität der Annotation: Schritte folgen frühestens nach 3 s aufeinander"),
-    Parameter("Merkmalsfenster, Rang-Fenster", "±0,5τ/τ/2τ, τ", A_PRIORI, "an τ gebunden"),
-    Parameter("Kandidatenabstand", "τ/5", A_PRIORI, "an τ gebunden, bleibt weit unter τ"),
-    Parameter("GRID_HZ", "50 Hz", TECHNICAL, "Abtastung der Evidenzkurven"),
-    Parameter("_SETTLE_OFFSET_S, _PIXEL_CHANGE_EPS", "0,2 s / 1,0", SET,
-              "fest; nicht getunt, nur als gesetzt dokumentiert"),
-    Parameter("_MAX_CALLS", "400", TECHNICAL, "fest; Treffer je Session im Bericht"),
-    Parameter("Bäume des Random Forest", "50 … 300", IN_FOLD,
-              "je Fold, bis der Fehler (Brier) auf 20 % zurückgehaltenen Trainingssessions "
-              "stabil ist (Schritte zu 50, zwei Schritte < 0,001); OOB ist auf dem Raster "
-              "verzerrt, weil Nachbarkandidaten fast identisch sind"),
-    Parameter("FOREST_MIN_SAMPLES_LEAF, FOREST_MAX_SAMPLES", "5 / 0,3", TECHNICAL,
-              "Regularisierung und Laufzeit; für alle Koalitionen gleich"),
-    Parameter("Startwerte", "n_seeds", SET,
-              "Wald und innere Splits je Startwert; F1 je Session über die Startwerte "
-              "gemittelt, bevor Statistik gebildet wird"),
-    Parameter("AUDIO_PEAK_OFFSET_S", "–", IN_FOLD,
-              "Gipfel der Satzglocke bei Satzbeginn + m_B, m_B = Median des Abstands "
-              "Satzbeginn → erste Referenzgrenze im Satz (±τ); < 10 Paare → Satzbeginn"),
-    Parameter("Ruhe-Höhe (Ereignisse)", "Pause / längste Pause", A_PRIORI,
-              "Dauer der Pause vor dem Burst, normiert auf die längste Pause der Session"),
-    Parameter("θ (Rauschschwelle), d (Mindestdauer)", "–", IN_FOLD,
-              "Auswahl aus θ ∈ {0,85; 0,9; 0,95; 0,98} × d ∈ {0,5; 1; 1,5; 2; 3} s "
-              "über das gepoolte Kandidaten-F1 der Änderungsbeginne (±τ, 1:1); Gleichstand → "
-              "weniger Änderungen, dann längeres d"),
-    Parameter("Entscheidungsschwelle", "–", IN_FOLD, "innere GroupKFold (5) über die Trainingssessions"),
-    Parameter("DOUBLE_CLICK_S", "0,5 s", A_PRIORI, "Windows-Standard"),
-    Parameter("Gewichte A0 (Ruhe : Abschluss : Klassenwechsel)", "1 : 1 : 0,5", A_PRIORI,
-              "Klassenwechsel ist das schwächste Signal"),
-    Parameter("GT_EDGE_S, GT_MERGE_S", "0,3 s / 0,1 s", A_PRIORI,
-              "Randregeln des Annotationsleitfadens (N3)"),
-)
 
 @dataclass(frozen=True)
 class FoldParams:
@@ -276,7 +209,7 @@ class Settings:
     seed: int = 0
     # Start values of the primary run; F1 per session is averaged over them
     # before any statistic, which removes the forest's own randomness from the
-    # session-to-session spread. Variants run with one.
+    # session-to-session spread.
     n_seeds: int = 3
 
     def __post_init__(self) -> None:

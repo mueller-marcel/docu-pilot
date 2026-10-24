@@ -5,7 +5,7 @@ aus Bildschirm, Sprache und Eingaben.**
 
 [![Pull Request](https://github.com/mueller-marcel/docu-pilot/actions/workflows/pull-request.yml/badge.svg)](https://github.com/mueller-marcel/docu-pilot/actions/workflows/pull-request.yml)
 ![Python](https://img.shields.io/badge/python-3.13%20%7C%203.14-3776AB?logo=python&logoColor=white)
-![Poetry](https://img.shields.io/badge/packaging-poetry-60A5FA?logo=poetry&logoColor=white)
+![uv](https://img.shields.io/badge/packaging-uv-DE5FE9?logo=uv&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![Sphinx](https://img.shields.io/badge/docs-sphinx-0A507A?logo=sphinx&logoColor=white)
 
@@ -65,15 +65,15 @@ flowchart LR
 
 ## Schnellstart
 
-**Voraussetzungen:** Python 3.13 oder 3.14 · [Poetry](https://python-poetry.org/)
-· `ffmpeg`/`ffprobe` im `PATH` · Zugang zur Anthropic-API (nur für die
+**Voraussetzungen:** [uv](https://docs.astral.sh/uv/) (installiert bei Bedarf auch
+Python 3.14) · `ffmpeg`/`ffprobe` im `PATH` · Zugang zur Anthropic-API (nur für die
 Segmentierung)
 
 ```bash
 git clone https://github.com/mueller-marcel/docu-pilot.git
 cd docu-pilot
-poetry install
-poetry run docupilot
+uv sync
+uv run docupilot
 ```
 
 Zugangsdaten liest DocuPilot aus der Umgebung oder aus einer `.env` im
@@ -105,8 +105,8 @@ Konfiguration und API-Referenz – liegt in [`docs/`](docs/) und wird mit Sphinx
 gebaut:
 
 ```bash
-poetry install --with docs
-poetry run sphinx-build -b html docs docs/_build/html
+uv sync --group docs
+uv run sphinx-build -b html docs docs/_build/html
 ```
 
 Danach `docs/_build/html/index.html` öffnen.
@@ -114,9 +114,9 @@ Danach `docs/_build/html/index.html` öffnen.
 ## Entwicklung
 
 ```bash
-poetry install --with dev
-poetry run ruff check .     # Lint
-poetry run pytest           # Tests
+uv sync                 # inklusive Gruppe dev
+uv run ruff check .     # Lint
+uv run pytest           # Tests
 ```
 
 Die CI prüft jeden Pull Request: Lint und Paketbau, Tests und einen

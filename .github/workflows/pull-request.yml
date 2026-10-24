@@ -15,8 +15,6 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14"
-  POETRY_VERSION: "2.3.0"
-  POETRY_NO_INTERACTION: "1"
 
 jobs:
   static:
@@ -28,25 +26,23 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Install Poetry
-        run: pipx install "poetry==${{ env.POETRY_VERSION }}"
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
 
-      - name: Validate Poetry configuration
-        run: poetry check --lock
+      - name: Validate lock file
+        run: uv lock --check
 
       - name: Install lint tooling
-        run: poetry install --only dev --no-root
+        run: uv sync --locked --only-group dev
 
       - name: Lint
-        run: poetry run ruff check .
+        run: uv run --no-sync ruff check .
 
       - name: Build package
-        run: poetry build
+        run: uv build
 
   test:
     name: Test
@@ -57,17 +53,37 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - name: Install Poetry
-        run: pipx install "poetry==${{ env.POETRY_VERSION }}"
-
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: poetry
+          enable-cache: true
 
       - name: Install dependencies
-        run: poetry install --with dev
+        run: uv sync --locked
 
       - name: Test
-        run: poetry run pytest tests -q -ra
+        run: uv run --no-sync pytest tests -q -ra
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+
+      # The API reference is read from the sources, not imported: the docs
+      # group alone is enough, without Qt, Whisper or the package itself.
+      - name: Install documentation tooling
+        run: uv sync --locked --only-group docs
+
+      - name: Build documentation
+        run: uv run --no-sync sphinx-build -W --keep-going -b html docs docs/_build/html

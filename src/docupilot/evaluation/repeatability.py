@@ -71,14 +71,6 @@ def _f1(evidence, modality: str, gt: Sequence[float], duration: float, tau: floa
     return metrics.match(gt, predicted, tau).f1
 
 
-def measured_settings(directories: Sequence[Path]) -> Settings:
-    """
-    The default settings; τ is a priori (config.TOLERANCE_S), so the corpus
-    does not change them.
-    """
-    return Settings()
-
-
 def measure(
     directory: Path,
     settings: Settings,
@@ -88,7 +80,7 @@ def measure(
     """
     Judge one session `runs` times per model-judged modality, caches bypassed.
 
-    :param settings: the run's settings (measured_settings).
+    :param settings: the run's settings.
     """
     session = RecordingSession.from_directory(directory)
     duration = dataset.duration_s(session)
@@ -134,7 +126,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     usable = corpus.scan(args.corpus).usable
-    settings = measured_settings(usable)
+    settings = Settings()
     print(f"τ = {settings.tau_s:.3f} s ({settings.tau_source})")
     rng = np.random.default_rng(args.seed)
     picked = sorted(rng.choice(len(usable), size=min(args.sessions, len(usable)), replace=False))

@@ -4,8 +4,8 @@
 
 | Komponente | Zweck |
 |---|---|
-| Python 3.13 oder 3.14 | Laufzeit (`requires-python = ">=3.13,<3.15"`) |
-| [Poetry](https://python-poetry.org/) ≥ 2 | Abhängigkeiten und virtuelle Umgebung |
+| Python 3.13 oder 3.14 | Laufzeit (`requires-python = ">=3.13,<3.15"`); `.python-version` legt lokal 3.14 fest, wie in der CI |
+| [uv](https://docs.astral.sh/uv/) | Abhängigkeiten, virtuelle Umgebung und bei Bedarf Python selbst |
 | `ffmpeg` und `ffprobe` im `PATH` | Aufnahme von Bildschirm und Mikrofon, Bildzeiten und Dauer der Aufnahmen |
 | Zugang zur Anthropic-API | Urteile des Sprach- und des Bildmodells in der Segmentierung |
 
@@ -16,13 +16,14 @@ im Cache der Session liegen.
 ## Installation
 
 ```bash
-poetry install
+uv sync
 ```
 
-Für Tests, Linting und diese Dokumentation:
+`uv sync` installiert die Laufzeitabhängigkeiten und die Gruppe `dev`
+(Tests, Linting) aus `uv.lock`. Für diese Dokumentation zusätzlich:
 
 ```bash
-poetry install --with dev,docs
+uv sync --group docs
 ```
 
 Das deutsche spaCy-Modell `de_core_news_lg` wird als Abhängigkeit mitinstalliert;
@@ -48,7 +49,7 @@ damit der Modalitätsvergleich nicht die Fähigkeiten zweier Modelle vergleicht
 ## Starten
 
 ```bash
-poetry run docupilot
+uv run docupilot
 ```
 
 oder `python -m docupilot`. Es öffnet sich das Hauptfenster.
@@ -106,8 +107,8 @@ Einige Prüfungen laufen ohne Oberfläche:
 
 ```bash
 # Wie stark weichen Whisper- und WhisperX-Satzanfänge voneinander ab?
-poetry run python -m docupilot.evaluation.alignment <korpus>
+uv run python -m docupilot.evaluation.alignment <korpus>
 
 # Wie stabil sind die Modellurteile ohne Cache? (verursacht Modellaufrufe)
-poetry run python -m docupilot.evaluation.repeatability <korpus>
+uv run python -m docupilot.evaluation.repeatability <korpus>
 ```

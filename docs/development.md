@@ -3,20 +3,20 @@
 ## Umgebung
 
 ```bash
-poetry install --with dev,docs
+uv sync --all-groups
 ```
 
 | Gruppe | Inhalt |
 |---|---|
 | (Haupt) | Laufzeitabhängigkeiten |
-| `dev` | `ruff`, `pytest` |
+| `dev` | `ruff`, `pytest`; installiert `uv sync` standardmäßig mit |
 | `docs` | `sphinx`, `furo`, `myst-parser`, `sphinx-autoapi`, `sphinx-copybutton`, `sphinxcontrib-mermaid` |
 
 ## Prüfen
 
 ```bash
-poetry run ruff check .
-poetry run pytest
+uv run ruff check .
+uv run pytest
 ```
 
 Die Tests in `tests/` sichern die Rechenwege, auf denen die Ergebnisse beruhen:
@@ -32,7 +32,7 @@ reproduzierbar.
 ## Dokumentation bauen
 
 ```bash
-poetry run sphinx-build -W --keep-going -b html docs docs/_build/html
+uv run sphinx-build -W --keep-going -b html docs docs/_build/html
 ```
 
 Die API-Referenz entsteht dabei aus den Docstrings; das Paket wird nicht
@@ -41,8 +41,7 @@ den Build ab. Live-Vorschau beim Schreiben, z. B. mit `sphinx-autobuild`
 (nicht Teil der Abhängigkeiten):
 
 ```bash
-poetry run pip install sphinx-autobuild
-poetry run sphinx-autobuild docs docs/_build/html
+uv run --with sphinx-autobuild sphinx-autobuild docs docs/_build/html
 ```
 
 Die Seiten sind Markdown (MyST); Diagramme sind Mermaid-Blöcke.
@@ -54,9 +53,9 @@ Die Seiten sind Markdown (MyST); Diagramme sind Mermaid-Blöcke.
 
 | Job | Schritte |
 |---|---|
-| Lint and package | `poetry check --lock`, `ruff check .`, `poetry build` |
-| Test | `poetry install --with dev`, `pytest tests` |
-| Docs | `poetry install --only docs --no-root`, `sphinx-build -W` |
+| Lint and package | `uv lock --check`, `ruff check .`, `uv build` |
+| Test | `uv sync --locked`, `pytest tests` |
+| Docs | `uv sync --locked --only-group docs`, `sphinx-build -W` |
 
 ## Konventionen
 

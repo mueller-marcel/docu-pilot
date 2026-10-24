@@ -74,5 +74,5 @@ Vorrang.
 | `DOUBLE_CLICK_S` | 0,5 s | Windows-Standard |
 | `KEY_CLASSES`, `MODIFIER_KEYS` | Tabellen | Tastenklassen der Ereignis-Modalität |
 
-Die Tabelle `PARAMETERS` in {py:mod}`docupilot.config` ordnet die Parameter
-zusätzlich nach Klasse – a priori, technisch, gesetzt, gemessen, in-fold.
+Der Kommentar über jeder Konstante in {py:mod}`docupilot.config` nennt ihre
+Herkunft: a priori, technisch, gesetzt, gemessen oder je Fold kalibriert.
