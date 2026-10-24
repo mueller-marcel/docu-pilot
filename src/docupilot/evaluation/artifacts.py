@@ -24,7 +24,7 @@ class ArtifactKind(Enum):
     """The groups generated files are deleted by."""
 
     LANES = auto()
-    """Drawn evidence curves and the video activity scan (.npz)."""
+    """Drawn evidence curves and the video SSIM scan (.npz)."""
 
     MODEL_CACHES = auto()
     """What the Claude models answered, per question and per recording (.json);
@@ -33,11 +33,10 @@ class ArtifactKind(Enum):
 
 FILE_NAMES: Mapping[ArtifactKind, frozenset[str]] = {
     ArtifactKind.LANES: frozenset(
-        {*(store.file_name(modality) for modality in MODALITIES), video.ACTIVITY_FILE}
+        {*(store.file_name(modality) for modality in MODALITIES), video.SSIM_FILE}
     ),
     ArtifactKind.MODEL_CACHES: frozenset({
-        video.VERDICT_CACHE_FILE, audio.VERDICT_CACHE_FILE,
-        *(store.raw_file_name(modality) for modality in (video.MODALITY, audio.MODALITY)),
+        video.VERDICT_CACHE_FILE, audio.VERDICT_CACHE_FILE, store.raw_file_name(audio.MODALITY),
     }),
 }
 

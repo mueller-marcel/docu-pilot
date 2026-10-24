@@ -32,3 +32,8 @@ def small_fonts(base: QFont) -> tuple[QFont, QFont]:
     tiny = QFont(small)
     tiny.setPointSize(8)
     return small, tiny
+
+
+def decimal(value: float, places: int) -> str:
+    """A number as the thesis writes it: fixed places, decimal comma, true minus."""
+    return f"{value:.{places}f}".replace(".", ",").replace("-", "−")
