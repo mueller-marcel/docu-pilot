@@ -71,7 +71,6 @@ A JSON array of boundaries:
 | `definition` | `"begin"` (primary) or `"end"` |
 | `run` | annotation run: 1 = reference, 2, 3, … = repetitions |
 | `annotated_at` | time of the annotation (UTC, ISO 8601) |
-| `guideline_version` | version of the annotation guideline |
 
 Further fields are stored along and ignored. Entries from older versions
 without `definition` are read via a field `kind` (`"start"` → `begin`,
@@ -79,7 +78,7 @@ otherwise `end`); without `run` they belong to run 1.
 
 ```json
 {"t_ms": 9600.0, "label": "00:09.600", "definition": "begin", "run": 1,
- "annotated_at": "2026-10-02T11:52:41+00:00", "guideline_version": "1"}
+ "annotated_at": "2026-10-02T11:52:41+00:00"}
 ```
 
 ## Caches

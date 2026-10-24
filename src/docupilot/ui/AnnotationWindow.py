@@ -7,7 +7,6 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -19,7 +18,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from docupilot.config import GUIDELINE_VERSION
 from docupilot.recording.session import RecordingSession
 from docupilot.ui.formatting import format_ms
 from docupilot.ui.widgets.BoundaryDialog import BoundaryDialog
@@ -204,12 +202,6 @@ class AnnotationWindow(QWidget):
         )
         self._run_box.valueChanged.connect(self._on_run_changed)
 
-        guideline_label = QLabel("Guideline")
-        guideline_label.setStyleSheet("color:#555; font-size:12px;")
-        self._guideline_edit = QLineEdit(GUIDELINE_VERSION)
-        self._guideline_edit.setFixedWidth(48)
-        self._guideline_edit.setToolTip("Version of the annotation guideline, saved with every boundary")
-
         self._features_button = QPushButton("♪  Features")
         self._features_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._features_button.setToolTip(
@@ -232,9 +224,6 @@ class AnnotationWindow(QWidget):
         layout.addSpacing(10)
         layout.addWidget(run_label)
         layout.addWidget(self._run_box)
-        layout.addSpacing(6)
-        layout.addWidget(guideline_label)
-        layout.addWidget(self._guideline_edit)
         layout.addSpacing(10)
         layout.addWidget(self._boundary_count_label)
         return toolbar
@@ -413,7 +402,6 @@ class AnnotationWindow(QWidget):
         pos_ms = float(self._player.position())
         self._session.add_ground_truth_boundary(
             pos_ms, label=format_ms(pos_ms), definition=definition, run=self._run,
-            guideline_version=self._guideline_edit.text().strip(),
         )
         self._update_boundary_count()
         if definition == "begin":

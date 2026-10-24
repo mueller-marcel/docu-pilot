@@ -84,9 +84,6 @@ GT_MERGE_S = 0.1
 
 PRIMARY_RUN = 1
 
-# Bump it whenever the guideline changes; it is stored with every boundary.
-GUIDELINE_VERSION = "1"
-
 KEY_CLASSES: dict[str, tuple[str, ...]] = {
     "completion": ("Key.enter", "ctrl+Key.enter", "ctrl+s"),
     "abort": ("Key.esc", "ctrl+z"),

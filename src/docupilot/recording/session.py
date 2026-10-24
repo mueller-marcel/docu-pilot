@@ -189,19 +189,16 @@ class RecordingSession:
         label: str | None = None,
         definition: str = DEFAULT_DEFINITION,
         run: int = 1,
-        guideline_version: str = "",
     ) -> None:
         """
         Append one boundary and save at once. Keeps the entry schema
-        (t_ms, label, definition, run, annotated_at, guideline_version) in one
-        place.
+        (t_ms, label, definition, run, annotated_at) in one place.
 
         :param t_ms: the boundary's time in milliseconds.
         :param label: display name, e.g. a formatted timestamp.
         :param definition: which definition the boundary follows, see
             BOUNDARY_DEFINITIONS.
         :param run: 1 for the annotation, 2, 3, … for blind repetitions of it.
-        :param guideline_version: version of the annotation guideline used.
         :raises ValueError: for an unknown definition or a run below 1.
         """
         if definition not in BOUNDARY_DEFINITIONS:
@@ -216,7 +213,6 @@ class RecordingSession:
             "definition": definition,
             "run": int(run),
             "annotated_at": datetime.now(timezone.utc).isoformat(),
-            "guideline_version": guideline_version,
         })
         self.save_ground_truth()
 
