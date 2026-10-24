@@ -34,9 +34,6 @@ from docupilot.evaluation import report as rep
 from docupilot.ui.formatting import format_bytes
 from docupilot.ui.report_view import ReportCharts, apply_report
 from docupilot.ui.ReportPdfWriter import write_report_pdf
-from docupilot.ui.widgets.SaturationChartWidget import SaturationChartWidget
-from docupilot.ui.widgets.ShapleyChartWidget import ShapleyChartWidget
-from docupilot.ui.widgets.SubsetChartWidget import SubsetChartWidget
 
 _BACKGROUND = "#ffffff"
 
@@ -73,16 +70,11 @@ class _ExperimentWorker(QObject):
     failed = Signal(str)
     done = Signal(object)
 
-    def __init__(self, directories: list[Path], settings: Settings, end_available: bool) -> None:
-        """
-        :param settings: the primary run's settings; its variants are run after it.
-        :param end_available: every session also carries "end" boundaries, so a
-            boundary_definition = "end" variant can be scored.
-        """
+    def __init__(self, directories: list[Path], settings: Settings) -> None:
+        """:param settings: the run's settings."""
         super().__init__()
         self._directories = directories
         self._settings = settings
-        self._end_available = end_available
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -109,35 +101,14 @@ class _ExperimentWorker(QObject):
                 )
                 return
 
-            settings = experiment.measure_tau(data, settings)
+            settings = experiment.measure_sesoi(data, settings)
             primary = experiment.run(data, settings,
                                      on_progress=self._progress("Primärlauf, Fold"),
                                      is_cancelled=self._is_cancelled)
             if self._cancelled:
                 self.failed.emit("Abgebrochen.")
                 return
-            settings = experiment.measure_sesoi(data, primary)
-            variants = []
-            for overrides in settings.variants:
-                if self._cancelled:
-                    break
-                variant = settings.variant(overrides)
-                if variant.boundary_definition == "end" and not self._end_available:
-                    continue
-                variant_data = (
-                    experiment.load(self._directories, variant, is_cancelled=self._is_cancelled,
-                                    on_progress=self._progress(f"Extraktion {overrides}"))
-                    if experiment.needs_extraction(settings, variant) else data
-                )
-                variants.append((overrides, experiment.run(
-                    variant_data, variant,
-                    on_progress=self._progress(f"Variante {overrides}, Fold"),
-                    is_cancelled=self._is_cancelled,
-                )))
-            if self._cancelled:
-                self.failed.emit("Abgebrochen.")
-                return
-            self.done.emit(rep.analyse(data, primary, variants))
+            self.done.emit(rep.analyse(data, primary))
         except Exception as exc:                      # noqa: BLE001 — shown, not hidden
             self.failed.emit(str(exc))
 
@@ -157,7 +128,6 @@ class ExperimentWindow(QDialog):
         self._corpus_root: Path | None = None
         self._settings_path: Path | None = None
         self._settings = Settings()
-        self._end_available = False
         self._can_run = False
         self._result: rep.Report | None = None
         self._thread: QThread | None = None
@@ -282,9 +252,7 @@ class ExperimentWindow(QDialog):
         self._sections.setContentsMargins(0, 0, 0, 0)
         self._sections.setSpacing(4)
 
-        self._charts = ReportCharts(
-            ShapleyChartWidget(), SubsetChartWidget(), SaturationChartWidget()
-        )
+        self._charts = ReportCharts.create()
         self._placeholder = QLabel("Noch keine Auswertung.")
         self._placeholder.setStyleSheet("color:#777; font-size:12px; padding:12px 6px;")
         self._sections.addWidget(self._placeholder)
@@ -343,7 +311,6 @@ class ExperimentWindow(QDialog):
         self._corpus_root = root
         scanned = corpus.scan(root)
         self._directories = scanned.usable
-        self._end_available = scanned.end_definition_available
         self._settings_path = scanned.settings_path
 
         self._table.setRowCount(len(scanned.sessions))
@@ -381,8 +348,7 @@ class ExperimentWindow(QDialog):
         self._settings_label.setText(
             f"Einstellungen ({path.name}{'' if path.exists() else ', Standardwerte'}): "
             f"{s.decider} · Kandidaten {s.candidate_pool} · Definition {s.boundary_definition} · "
-            f"τ und SESOI aus der Wiederholungsannotation · Intervall {s.ci_method} "
-            f"{s.ci_level:.0%} · {len(s.variants)} Variante(n)"
+            f"τ = {s.tau_s:g} s, SESOI = 1 Grenze · Intervalle 95 %"
         )
         return True
 
@@ -410,7 +376,7 @@ class ExperimentWindow(QDialog):
         self._start_spinner()
 
         self._thread = QThread(self)
-        self._worker = _ExperimentWorker(self._directories, self._settings, self._end_available)
+        self._worker = _ExperimentWorker(self._directories, self._settings)
         self._worker.moveToThread(self._thread)
 
         self._thread.started.connect(self._worker.run)
@@ -546,7 +512,7 @@ class ExperimentWindow(QDialog):
             widget = item.widget()
             if widget is None:
                 continue
-            if widget in (self._charts.shapley, self._charts.subsets, self._charts.saturation):
+            if widget in self._charts.widgets():
                 widget.setParent(None)
             else:
                 widget.deleteLater()
@@ -594,7 +560,7 @@ class ExperimentWindow(QDialog):
         if not chosen:
             return
         r = self._result
-        experiment.write_csv([*r.rows, *r.variant_rows], Path(chosen))
+        experiment.write_csv(r.rows, Path(chosen))
         self._status.setText(f"Exportiert nach {chosen}")
 
     def closeEvent(self, event) -> None:

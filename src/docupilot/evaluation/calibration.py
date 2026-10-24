@@ -8,8 +8,8 @@ audio parameters only move how a cached raw result is drawn. The video pair
 changes it produces are judged afterwards. The event curves have no in-fold
 parameter.
 
-    AUDIO_ANCHOR, PEAK_OFFSET_S   where an announcement's boundary lies
-    VIDEO θ, d                    which screen changes are candidates at all
+    AUDIO_PEAK_OFFSET  how long after an announcement starts its boundary lies
+    VIDEO θ, d         which screen changes are candidates at all
 """
 
 from __future__ import annotations
@@ -34,16 +34,15 @@ from docupilot.segmentation import audio, video
 class AudioCalibration:
     """What the audio calibration found, including why it may have fallen back."""
 
-    anchor: str
-    offset_s: float
+    peak_offset_s: float
     n_pairs: int
     match_rate: float
-    """Share of NEW_SUBGOAL sentences with a reference boundary in their search
-    range. Low means many announcements have no action that can be placed in
-    time — a low audio contribution is then explained, not an extractor bug."""
+    """Share of sentences with a reference boundary within τ of their interval.
+    Low means many sentences announce no action that can be placed in time —
+    a low audio contribution is then explained, not an extractor bug."""
     fallback: bool
-    offsets_s: dict[str, list[float]] = field(default_factory=dict)
-    """Signed distances g − a_i per anchor, for the histogram in the report."""
+    offsets_s: list[float] = field(default_factory=list)
+    """Distances boundary − sentence start, for the histogram in the report."""
 
 
 @dataclass(frozen=True)
@@ -67,11 +66,9 @@ class Calibration:
     video: VideoCalibration
 
 
-def _nearest_in(gt: np.ndarray, lo: float, hi: float, target: float) -> float | None:
+def _first_in(gt: np.ndarray, lo: float, hi: float) -> float | None:
     inside = gt[(gt >= lo) & (gt <= hi)]
-    if len(inside) == 0:
-        return None
-    return float(inside[np.argmin(np.abs(inside - target))])
+    return float(inside[0]) if len(inside) else None
 
 
 def calibrate_audio(
@@ -80,47 +77,39 @@ def calibrate_audio(
     settings: Settings,
 ) -> AudioCalibration:
     """
-    AUDIO_ANCHOR and PEAK_OFFSET_S from the training sessions.
+    AUDIO_PEAK_OFFSET from the training sessions (MA 3.2.2): how long after its
+    start a sentence's bell peaks.
 
-    For every NEW_SUBGOAL sentence j, r_j is the reference boundary nearest to
-    the sentence start s_j within [s_j − P, R_j] — the reach of its window.
-    Both distances Δ^B_j = r_j − s_j and Δ^E_j = r_j − e_j are collected; the
-    anchor whose distances have the smaller mean absolute deviation from their
-    median wins (a tie goes to the start), and d is that median, sign
-    included. Fewer than AUDIO_MIN_PAIRS pairs: sentence start, d = 0, and the
+    The narration announces each step while or just before it is carried out,
+    so a sentence leads its boundary by a fairly constant time, not by a
+    constant share of its length. For every sentence [s_j, e_j], g_j is the
+    first reference boundary within [s_j − τ, e_j + τ]; the offset is the
+    median of max(g_j − s_j, 0). Every sentence counts, whatever the LLM said —
+    the offset describes when people speak, the verdict whether a step begins.
+    Fewer than AUDIO_MIN_PAIRS pairs: the sentence start (offset 0), and the
     fallback is reported.
 
     :param raws: the training sessions' audio raw results.
     :param gts: their reference boundaries, in the same order.
-    :param settings: supplies P = 2τ and the last window's fallback 4τ.
+    :param settings: supplies τ.
     """
-    offsets: dict[str, list[float]] = {"begin": [], "end": []}
-    n_operations = 0
+    tau = settings.tau_s
+    offsets: list[float] = []
+    n_sentences = 0
     for raw, gt in zip(raws, gts):
         reference = np.sort(np.asarray(gt, dtype=np.float64))
-        for sentence, (s_j, r_j) in zip(raw.sentences, raw.windows(settings.last_gap_s)):
-            if sentence.category != audio.NEW_SUBGOAL:
-                continue
-            n_operations += 1
-            g = _nearest_in(reference, s_j - settings.pre_s, r_j, s_j)
-            if g is None:
-                continue
-            for anchor in offsets:
-                offsets[anchor].append(g - audio.anchor_time(sentence, anchor))
+        for sentence in raw.sentences:
+            n_sentences += 1
+            s_j, e_j = sentence.start_s, max(sentence.end_s, sentence.start_s)
+            g = _first_in(reference, s_j - tau, e_j + tau)
+            if g is not None:
+                offsets.append(max(g - s_j, 0.0))
 
-    n_pairs = len(offsets["begin"])
-    match_rate = n_pairs / n_operations if n_operations else 0.0
+    n_pairs = len(offsets)
+    match_rate = n_pairs / n_sentences if n_sentences else 0.0
     if n_pairs < AUDIO_MIN_PAIRS:
-        return AudioCalibration("begin", 0.0, n_pairs, match_rate, True, offsets)
-
-    def spread(values: list[float]) -> float:
-        median = float(np.median(values))
-        return float(np.mean(np.abs(np.asarray(values) - median)))
-
-    anchor = min(("begin", "end"), key=lambda a: (spread(offsets[a]), a != "begin"))
-    return AudioCalibration(
-        anchor, float(np.median(offsets[anchor])), n_pairs, match_rate, False, offsets
-    )
+        return AudioCalibration(0.0, n_pairs, match_rate, True, offsets)
+    return AudioCalibration(float(np.median(offsets)), n_pairs, match_rate, False, offsets)
 
 
 def calibrate_video(
@@ -133,8 +122,7 @@ def calibrate_video(
     the grid the change onsets are matched 1:1 to the reference boundaries
     within τ, as in the evaluation; TP, FP and FN are pooled over the sessions
     and the pair with the highest candidate F1 wins. A tie goes to fewer
-    changes, then to the longer d. The first change of a recording is no
-    candidate (see video.changes).
+    changes, then to the longer d.
 
     Too coarse a pair (low θ, long d) misses boundaries; too fine a pair finds
     many changes, and every one costs a VLM call.
@@ -168,7 +156,7 @@ def calibrate(
     audio_cal = calibrate_audio(audio_raws, gts, settings)
     video_cal = calibrate_video(video_raws, gts, settings)
     return Calibration(
-        params=FoldParams(audio_anchor=audio_cal.anchor, peak_offset_s=audio_cal.offset_s,
+        params=FoldParams(audio_peak_offset_s=audio_cal.peak_offset_s,
                           video_theta=video_cal.theta, video_min_rest_s=video_cal.min_rest_s),
         audio=audio_cal,
         video=video_cal,

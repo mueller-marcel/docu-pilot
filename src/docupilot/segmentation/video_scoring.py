@@ -23,7 +23,10 @@ from docupilot.segmentation import backend
 MODEL = backend.MODEL
 
 # Bump when the prompt or the score mapping changes — invalidates cached verdicts.
-PROMPT_VERSION = "v9"   # v9: sub-goal change judged on BEFORE|AFTER only;
+PROMPT_VERSION = "v11"  # v11: the sub-goal as Kurby & Zacks (2008) define it;
+                        # v10: "does the sub-goal change?", a sub-goal being one
+                        #      operation of the workflow handbook;
+                        # v9: sub-goal change judged on BEFORE|AFTER only;
                         # v8: the same on START|BEFORE|AFTER|NEXT
 
 # ONE composite image, BEFORE left, AFTER right — not cosmetic: sent as two
@@ -47,8 +50,9 @@ settled on the RIGHT. Both show a moment where the screen stood still.
 A RED BOX on both halves marks the region where the two screenshots differ in
 pixels. It tells you WHERE to look, not WHETHER something meaningful happened.
 
-""" + backend.SUBGOAL_DEFINITION + """ The question is whether the change from BEFORE to AFTER is the FIRST
-step toward a NEW sub-goal.
+""" + backend.SUBGOAL_DEFINITION + """
+
+The question is: does the person's sub-goal CHANGE from BEFORE to AFTER?
 
 Work in this order, and do not skip a step:
 
@@ -57,21 +61,21 @@ STEP 2 - Infer from BEFORE what the person was working on, and decide whether th
          change serves that goal or a different one.
 STEP 3 - Pick exactly one category:
 
-  NEW_SUBGOAL   The change serves a DIFFERENT goal than the state before it. This
-                includes the first move on the way there: opening a menu, a
-                dialog or a context menu, selecting another object, or switching
-                to another sheet, tab, folder or window IN ORDER TO do something
-                new.
-  SAME_SUBGOAL  The change continues or finishes the goal visible in BEFORE: a
-                further operation toward the same aim, a step inside a menu or
-                dialog already open, correcting a mistake such as a typo, or the
-                delayed result of something just started (a page loading, a
-                filter or build finishing).
+  NEW_SUBGOAL   The sub-goal changes: the change is the first action serving a
+                DIFFERENT sub-goal than the one pursued in BEFORE - such as
+                opening a menu, a dialog or a context menu, selecting another
+                object, or switching to another sheet, tab, folder or window IN
+                ORDER TO pursue the new sub-goal.
+  SAME_SUBGOAL  The sub-goal stays: the change is a further action of the
+                sub-goal visible in BEFORE - a step inside a menu or dialog
+                already open, correcting a mistake such as a typo, or the delayed
+                result of something just started (a page loading, a filter or
+                build finishing).
   NOT_USER      Nothing meaningful changed (a blinking caret, a highlight,
                 rendering noise), or the system changed on its own (a
                 notification, a toast, a clock tick).
 
-What decides is the person's goal, not how many pixels moved. When the two
+What decides is whether the sub-goal changes, not how many pixels moved. When the two
 screens alone do not tell whether a new sub-goal begins - an opened menu, say -
 give a low confidence rather than guessing. The mouse cursor is not recorded, so
 you will never see a pointer.
@@ -83,8 +87,8 @@ it decide "category":
  "confidence": <0.0-1.0>,
  "reason": "<why this category, max 20 words>"}"""
 
-_USER = ("LEFT = BEFORE, RIGHT = AFTER the screen settled. Is the change the first "
-         "step toward a new sub-goal? JSON only.")
+_USER = ("LEFT = BEFORE, RIGHT = AFTER the screen settled. Does the person's "
+         "sub-goal change? JSON only.")
 
 
 @dataclass(frozen=True)

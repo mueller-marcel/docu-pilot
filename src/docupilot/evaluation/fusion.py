@@ -11,6 +11,7 @@ candidate pool is a neutral grid, identical for every coalition (C2).
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -20,11 +21,16 @@ from scipy.stats import rankdata
 
 from docupilot.config import (
     FEATURE_WINDOWS_TAU,
-    FOREST_TREES,
-    FOREST_TREES_INNER,
+    FOREST_MAX_SAMPLES,
+    FOREST_MIN_SAMPLES_LEAF,
+    FOREST_TREES_MAX,
+    FOREST_TREES_STEP,
     GRID_HZ,
     INNER_FOLDS,
     THRESHOLD_GRID,
+    TREES_HOLDOUT_SHARE,
+    TREES_STABLE_STEPS,
+    TREES_STABLE_TOL,
 )
 from docupilot.evaluation import metrics
 from docupilot.segmentation.evidence import BOUNDARY_THRESHOLD, BoundaryEvidence
@@ -249,8 +255,8 @@ class EmptyBaseline:
 class RuleFuser:
     """
     The untrained baseline A0 (C7): the maximum of the coalition's score curves,
-    its peaks of at least 0.5, at least τ apart — the NMS radius of the trained
-    deciders. No training, no threshold.
+    its peaks of at least 0.5, at least NMS_S apart — the NMS radius of the
+    trained deciders. No training, no threshold.
 
     Shows whether a finding rests on the modalities or only on the learned
     combiner. The event score is already the weighted maximum of its
@@ -303,21 +309,18 @@ class Fuser:
     weights because the grid is ~1:15 imbalanced.
     """
 
-    def __init__(self, kind: str, *, n_estimators: int | None = None, seed: int = 0,
-                 oob: bool = False) -> None:
+    def __init__(self, kind: str, *, n_estimators: int | None = None, seed: int = 0) -> None:
+        """:param n_estimators: the fold's forest size (tree_count)."""
         self.kind = kind
-        self._n_estimators = n_estimators or FOREST_TREES
+        self._n_estimators = n_estimators or FOREST_TREES_MAX
         self._seed = seed
-        self._oob = oob
         self._model = None
-        self.oob_proba: np.ndarray | None = None
 
     def fit(self, features: np.ndarray, labels: np.ndarray) -> Fuser:
         classes = np.unique(labels)
         if len(classes) < 2:
             value = float(classes[0]) if len(classes) else 0.0
             self._model = _Constant(value)
-            self.oob_proba = np.full(len(labels), value)
             return self
 
         if self.kind == "forest":
@@ -326,13 +329,11 @@ class Fuser:
             self._model = RandomForestClassifier(
                 n_estimators=self._n_estimators,
                 class_weight="balanced",
+                min_samples_leaf=FOREST_MIN_SAMPLES_LEAF,
+                max_samples=FOREST_MAX_SAMPLES,
                 random_state=self._seed,
-                oob_score=self._oob,
                 n_jobs=-1,
             ).fit(features, labels)
-            if self._oob:
-                oob = self._model.oob_decision_function_[:, 1]
-                self.oob_proba = np.where(np.isnan(oob), 0.5, oob)
         elif self.kind == "logreg":
             from sklearn.linear_model import LogisticRegression
             from sklearn.pipeline import make_pipeline
@@ -434,23 +435,56 @@ def choose_threshold(
     )
 
 
-def oob_threshold(
-    sessions: Sequence[Prepared],
-    oob: np.ndarray,
-    post: Callable[[np.ndarray, np.ndarray, float], list[float]],
-    tau_s: float,
-) -> float:
+def tree_count(sessions: Sequence[Prepared], seed: int = 0) -> tuple[int, list[float]]:
     """
-    The threshold the former out-of-bag calibration would have chosen — logged
-    as a comparison column, never used.
+    The number of trees after which the forest's error has settled (MA 3.3.1,
+    Hastie et al. 2009, p. 593): high with few trees, then falling; once it
+    stays flat there are enough. Grown with warm start, so the whole search
+    costs about one forest of the final size.
+
+    The error is measured on held-out training SESSIONS (TREES_HOLDOUT_SHARE
+    of them, drawn with `seed`) rather than on out-of-bag rows — see
+    config.FOREST_TREES_STEP for why OOB is biased on the grid — as the Brier
+    score, which needs no decision threshold.
+
+    :param sessions: the outer fold's training sessions only.
+    :return: (tree count, holdout error after each step).
     """
-    folds, offset = [], 0
-    for s in sessions:
-        folds.append((s.times, oob[offset:offset + len(s.times)], s.gt_s))
-        offset += len(s.times)
-    return best_threshold(folds, post, tau_s)
+    from sklearn.ensemble import RandomForestClassifier
 
+    order = np.random.default_rng(seed).permutation(len(sessions))
+    n_val = max(1, int(round(TREES_HOLDOUT_SHARE * len(sessions))))
+    val, fit = order[:n_val], order[n_val:]
+    if len(fit) == 0:
+        return FOREST_TREES_STEP, []
+    x_fit = np.vstack([sessions[i].features for i in fit])
+    y_fit = np.concatenate([sessions[i].labels for i in fit])
+    x_val = np.vstack([sessions[i].features for i in val])
+    y_val = np.concatenate([sessions[i].labels for i in val]).astype(np.float64)
+    if len(np.unique(y_fit)) < 2 or len(y_val) == 0:
+        return FOREST_TREES_STEP, []
 
-def trees_inner(kind: str) -> int:
-    """Inner fits may be cheaper; only the forest has a size to reduce."""
-    return FOREST_TREES_INNER if kind == "forest" else FOREST_TREES
+    forest = RandomForestClassifier(
+        n_estimators=FOREST_TREES_STEP, class_weight="balanced",
+        min_samples_leaf=FOREST_MIN_SAMPLES_LEAF, max_samples=FOREST_MAX_SAMPLES,
+        random_state=seed, warm_start=True, n_jobs=-1,
+    )
+    errors: list[float] = []
+    flat = 0
+    n = FOREST_TREES_STEP
+    while True:
+        forest.set_params(n_estimators=n)
+        with warnings.catch_warnings():
+            # warm_start keeps the class weights of the first fit — same data,
+            # so the same weights; sklearn warns regardless.
+            warnings.simplefilter("ignore", UserWarning)
+            forest.fit(x_fit, y_fit)
+        p = forest.predict_proba(x_val)[:, 1]
+        errors.append(float(np.mean((p - y_val) ** 2)))
+        if len(errors) >= 2 and abs(errors[-1] - errors[-2]) < TREES_STABLE_TOL:
+            flat += 1
+        else:
+            flat = 0
+        if flat >= TREES_STABLE_STEPS or n >= FOREST_TREES_MAX:
+            return n, errors
+        n += FOREST_TREES_STEP

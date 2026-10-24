@@ -9,10 +9,11 @@ Two stages, so that calibrating a parameter never re-reads anything (C8):
     render(raw, ...)       three sub-curves drawn at the burst starts — cheap
 
 The sub-curves (C14), all placed at the FIRST event of a burst because the
-annotation marks the beginning of the next step:
+annotation marks the beginning of the next step. The primary run uses the
+rest alone (MA 3.2.5); the other two are the "all" sensitivity variant:
 
-    rest          how long the user was idle before the burst, as its
-                  percentile rank among the session's pauses
+    rest          how long the user was idle before the burst, relative to
+                  the session's longest pause
     completion    the previous burst ended with a completion key (Enter,
                   Ctrl+Enter, Ctrl+S) not followed by an abort key (Esc,
                   Ctrl+Z) — the chunking signal of Rebmann & van der Aa
@@ -31,7 +32,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
-from scipy.stats import rankdata
 
 from docupilot.config import (
     DOUBLE_CLICK_S,
@@ -274,11 +274,9 @@ def transitions(
     "end" (sensitivity only): at the last event of burst k, describing the step
     from k to k+1; the last burst's rest runs to the end of the log.
 
-    The rest height is the pause's percentile rank among the session's pauses
-    (rank / n, ties averaged). The literature backs only the ordering — pauses
-    before boundaries are longer on average (Passonneau & Litman 1997; Shriberg
-    et al. 2000) — not a functional form, so the height uses nothing but that
-    ordering: no parameter, and normalised to the user's own pace.
+    The rest height follows the duration of the pause (MA 3.2.5): the pause
+    divided by the session's longest one, so it lies in (0, 1], grows with
+    the pause and is normalised to the user's own pace without a parameter.
     """
     bursts = raw.bursts
     out: list[tuple[float, dict[str, float]]] = []
@@ -303,9 +301,10 @@ def transitions(
             "completion": 1.0 if before is not None and before.completed else 0.0,
             "class_change": 0.0 if similarity is None else 1.0 - similarity,
         }))
-    ranks = rankdata(rests) / len(rests) if rests else []
+    longest = max(rests, default=0.0)
+    heights_rest = [max(r, 0.0) / longest if longest > 0 else 0.0 for r in rests]
     return [(position, {"rest": float(r), **heights})
-            for (position, heights), r in zip(out, ranks)]
+            for (position, heights), r in zip(out, heights_rest)]
 
 
 def channel_names(settings: Settings) -> tuple[str, ...]:
@@ -318,7 +317,8 @@ def render(
 ) -> BoundaryEvidence:
     """
     Draw the bursts onto the sub-curves: per transition and sub-curve a bell
-    at the transition's time, height = the sub-curve's value, σ = τ.
+    at the transition's time, height = the sub-curve's value, as wide as the
+    tolerance window (σ = τ/3, cut off at ±τ).
 
     The displayed score — and what the rule decider reads — is the weighted
     maximum of the sub-curves (1 : 1 : 0.5, a priori). A boundary is committed

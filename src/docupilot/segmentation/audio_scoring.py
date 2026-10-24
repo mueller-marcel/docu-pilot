@@ -1,7 +1,7 @@
 """
 The audio modality's semantic stage: an LLM decides, per narrated sentence,
-whether it announces the first step toward a NEW sub-goal — the same boundary
-question the video judge asks of a screen change.
+whether the person's sub-goal changes with it — the same boundary question the
+video judge asks of a screen change.
 
 Reads the transcript only, never the screen or the event stream.
 """
@@ -27,11 +27,15 @@ MODEL = backend.MODEL
 #     menu opening was MEANS where the guideline sets the boundary.
 # a2: dropped the example sentences; a1's were lifted from the session under
 #     evaluation, so its verdicts prove nothing about generalisation.
-PROMPT_VERSION = "a3"
+# a4: asks whether the sub-goal CHANGES, a sub-goal being one operation of the
+#     workflow handbook (a3's "group of operations" was coarser than the
+#     annotated steps); the first announced step is a change, not SAME_SUBGOAL.
+# a5: the sub-goal as Kurby & Zacks (2008) define it, as the thesis does.
+PROMPT_VERSION = "a5"
 
 _BOUNDARY = "NEW_SUBGOAL"
 _CATEGORIES = (
-    _BOUNDARY,        # announces the first step toward a different sub-goal
+    _BOUNDARY,        # the sub-goal changes: the first step of a different one
     "SAME_SUBGOAL",   # continues, corrects or finishes the current one
     "OTHER",          # filler, commentary, verification — announces no step
 )
@@ -43,32 +47,32 @@ You are given the spoken narration of a person working through a task in desktop
 software, transcribed and split into sentences, in order. They were told to say
 each step out loud as they do it. The narration may be in German.
 
-""" + backend.SUBGOAL_DEFINITION + """ For EACH sentence the question is whether
-it announces the FIRST step toward a NEW sub-goal.
+""" + backend.SUBGOAL_DEFINITION + """
+
+For EACH sentence the question is: does the person's sub-goal CHANGE with it?
 
 Categories:
 
-  NEW_SUBGOAL   The sentence announces a step that serves a DIFFERENT goal than
-                the sentences before it were working toward. This includes the
-                first move on the way there: opening a menu, a dialog or a
-                context menu, selecting another object, or switching to another
-                sheet, tab, folder or window IN ORDER TO do something new - and
-                a sentence that names the new goal itself.
-  SAME_SUBGOAL  The sentence announces a step that continues or finishes the
-                current goal: a further operation toward the same aim, a step
-                inside a menu or dialog already opened for it, correcting a
-                mistake such as a typo, or waiting for something just started.
+  NEW_SUBGOAL   The sub-goal changes: the sentence announces or names a
+                DIFFERENT sub-goal than the sentences before it were pursuing,
+                or the first action serving it - such as opening a menu or a
+                dialog, or switching to another sheet, tab, folder or window IN
+                ORDER TO pursue the new sub-goal.
+  SAME_SUBGOAL  The sub-goal stays: the sentence names a further action of the
+                current sub-goal - a step inside a menu or dialog already opened
+                for it, correcting a mistake such as a typo, or waiting for
+                something just started.
   OTHER         Announces no step: filler, thinking aloud, commentary on a
                 result, reading or checking something, greetings.
 
 Judge the sentences IN CONTEXT of the sequence: the current goal is the one the
 preceding sentences have been working toward, and the following sentences show
 what a step was for. When several sentences lead to a new goal, only the FIRST
-of them is NEW_SUBGOAL. The first step of the whole narration begins the first
-sub-goal, which follows no other one: it is SAME_SUBGOAL.
+of them is NEW_SUBGOAL. The first sentence that announces a step starts the
+first sub-goal: it is NEW_SUBGOAL too.
 
-What decides is the person's goal, not whether an action is mentioned - the
-speaker narrates every step, so almost every sentence mentions one. When the
+What decides is whether the sub-goal changes, not whether an action is
+mentioned - the speaker narrates every step, so almost every sentence mentions one. When the
 sentences do not tell whether a new sub-goal begins, give a low confidence
 rather than guessing.
 

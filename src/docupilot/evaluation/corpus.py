@@ -86,10 +86,9 @@ class CorpusScan:
     @property
     def can_evaluate(self) -> bool:
         """
-        Whether a run can start: leave-one-session-out needs two sessions, and
-        τ and the SESOI are measured from a repeated annotation.
+        Whether a run can start: leave-one-session-out needs two sessions.
         """
-        return self.enough_sessions and self.retest_sessions > 0
+        return self.enough_sessions
 
 
 def describe(scan: CorpusScan) -> str:
@@ -116,8 +115,6 @@ def describe(scan: CorpusScan) -> str:
     )
     if not scan.enough_sessions:
         parts.append("⚠ mindestens zwei Sessions nötig (Leave-one-session-out)")
-    if not scan.retest_sessions:
-        parts.append("⚠ keine Wiederholungsannotation — τ und SESOI nicht messbar, kein Lauf")
     return "  ·  ".join(parts)
 
 

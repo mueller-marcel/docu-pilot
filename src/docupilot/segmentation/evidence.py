@@ -4,10 +4,11 @@ What every modality returns, and the two ways of drawing evidence onto a curve.
 The shared vocabulary of the segmentation package — deliberately the only thing
 the three modality modules have in common.
 
-The curves follow "Evidenzkurven: Breite τ und Gipfel": a hint at a point in
-time becomes a Gaussian bell with σ = τ, a spoken sentence a raised-cosine
-window; several entries are merged by pointwise maximum, and every curve is
-sampled on the GRID_HZ grid E[n] = E(n / GRID_HZ).
+The curves follow MA 3.2.2: a hint at a point in time becomes a Gaussian bell
+as wide as the tolerance window (σ = τ/3, cut off at 3σ = ±τ), a spoken
+sentence a raised-cosine bell over its own interval; several entries are
+merged by pointwise maximum, and every curve is sampled on the GRID_HZ grid
+E[n] = E(n / GRID_HZ).
 """
 
 from __future__ import annotations

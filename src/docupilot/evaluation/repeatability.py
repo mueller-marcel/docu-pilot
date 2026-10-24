@@ -26,8 +26,8 @@ from pathlib import Path
 
 import numpy as np
 
-from docupilot.config import FoldParams, Settings
-from docupilot.evaluation import corpus, dataset, metrics, reliability
+from docupilot.config import NMS_S, FoldParams, Settings
+from docupilot.evaluation import corpus, dataset, metrics
 from docupilot.evaluation.fusion import EmptyBaseline, RuleFuser
 from docupilot.recording.session import RecordingSession
 from docupilot.segmentation import audio, video
@@ -66,28 +66,17 @@ def agreement(runs: Sequence[dict[object, tuple[str, float]]]) -> tuple[float, f
 
 
 def _f1(evidence, modality: str, gt: Sequence[float], duration: float, tau: float) -> float:
-    predicted = RuleFuser(tau).predict({modality: evidence}, [modality], duration,
+    predicted = RuleFuser(NMS_S).predict({modality: evidence}, [modality], duration,
                                        EmptyBaseline(float("inf")))
     return metrics.match(gt, predicted, tau).f1
 
 
 def measured_settings(directories: Sequence[Path]) -> Settings:
     """
-    The default settings with τ measured from the corpus' repeated annotation.
-
-    :raises ValueError: when no session was annotated twice.
+    The default settings; τ is a priori (config.TOLERANCE_S), so the corpus
+    does not change them.
     """
-    settings = Settings()
-    definition = settings.boundary_definition
-    run1, run2 = {}, {}
-    for directory in directories:
-        session = RecordingSession.from_directory(directory)
-        duration = dataset.duration_s(session)
-        run1[directory.name] = dataset.ground_truth_s(session, definition, 1, duration)
-        if 2 in session.annotation_runs(definition):
-            run2[directory.name] = dataset.ground_truth_s(session, definition, 2, duration)
-    tau, source = reliability.measure_tau(run1, run2)
-    return settings.replace(tau_primary_s=tau, tau_source=source)
+    return Settings()
 
 
 def measure(
@@ -99,7 +88,7 @@ def measure(
     """
     Judge one session `runs` times per model-judged modality, caches bypassed.
 
-    :param settings: with τ measured (measured_settings).
+    :param settings: the run's settings (measured_settings).
     """
     session = RecordingSession.from_directory(directory)
     duration = dataset.duration_s(session)

@@ -222,17 +222,16 @@ def changes(
     One change between every two consecutive rests: onset = first moving frame
     after rest m, BEFORE and AFTER = the state frames of rests m and m+1.
 
-    The first change of a recording begins the first sub-goal — no boundary,
-    by definition (k segments, k − 1 boundaries) — and is dropped. Movement
-    after the last rest has no AFTER and yields no change.
+    The first change is kept: it begins the first sub-goal, and the annotation
+    marks that beginning too (every session has a boundary in its first
+    seconds). Movement after the last rest has no AFTER and yields no change.
     """
     ph = rest_phases(times_s, sim, theta, min_rest_s)
-    out = [
+    return [
         Change(rest_start=k0, onset=j0 + 1,
                before=state_frame(times_s, k0, j0), after=state_frame(times_s, k1, j1))
         for (k0, j0), (k1, j1) in zip(ph, ph[1:])
     ]
-    return out[1:]
 
 
 # ── Step 3: the verdict on each BEFORE|AFTER pair ─────────────────────────────
