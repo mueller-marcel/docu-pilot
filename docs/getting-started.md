@@ -73,7 +73,8 @@ After stopping – or via **File → Open…** for a saved
 session – the annotation window shows the video. **Set boundary (begin)**
 and **Set end** mark the current position as a boundary. The boundaries
 are stored in `ground_truth.json`, separated by boundary definition (`begin`, `end`)
-and annotation run (1, 2, …). Which boundary is to be set where is defined by the
+and annotation run (1 = reference annotation, 2 = repeat annotation, chosen in
+the dropdown of the annotation window). Which boundary is to be set where is defined by the
 annotation guideline ({doc}`concepts/boundaries`).
 
 **Features** opens the feature dialog: a timeline with the evidence curve

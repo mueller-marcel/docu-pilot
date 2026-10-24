@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from docupilot.recording.session import RecordingSession
-from docupilot.ui.formatting import format_ms
+from docupilot.ui.formatting import format_ms, run_name
 
 _DEFINITION_TEXT = {"begin": "Begin", "end": "End  "}
 
@@ -29,7 +29,7 @@ class BoundaryDialog(QDialog):
 
     def __init__(self, boundaries: list[dict], run: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Boundaries set · run {run}")
+        self.setWindowTitle(f"Boundaries set · {run_name(run)}")
         self.setMinimumSize(460, 320)
         self.setModal(True)
 
@@ -85,7 +85,7 @@ class BoundaryDialog(QDialog):
 
     def _refresh_list(self) -> None:
         visible = self._visible()
-        self._header.setText(f"{len(visible)} boundary(-ies) in run {self._run}")
+        self._header.setText(f"{len(visible)} boundary(-ies) · {run_name(self._run)}")
         self._list.clear()
         for n, i in enumerate(visible, start=1):
             b = self._all[i]

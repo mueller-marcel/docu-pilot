@@ -5,12 +5,12 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSizePolicy,
     QSlider,
-    QSpinBox,
     QSplitter,
     QStyle,
     QStyleOptionSlider,
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from docupilot.recording.session import RecordingSession
-from docupilot.ui.formatting import format_ms
+from docupilot.ui.formatting import RUN_NAMES, format_ms, run_name
 from docupilot.ui.widgets.BoundaryDialog import BoundaryDialog
 from docupilot.ui.widgets.EventsPanelWidget import EventsPanelWidget
 from docupilot.ui.widgets.FeatureDialog import FeatureDialog
@@ -191,16 +191,14 @@ class AnnotationWindow(QWidget):
         )
         self._boundary_count_label.clicked.connect(self._show_boundary_dialog)
 
-        run_label = QLabel("Run")
-        run_label.setStyleSheet("color:#555; font-size:12px;")
-        self._run_box = QSpinBox()
-        self._run_box.setRange(1, 9)
-        self._run_box.setValue(1)
+        self._run_box = QComboBox()
+        for run, name in RUN_NAMES.items():
+            self._run_box.addItem(name, run)
         self._run_box.setToolTip(
-            "1 = annotation · 2 = blind repetition (at least 3 weeks later); "
-            "boundaries of other runs stay hidden"
+            "Repeat annotation: the blind repetition of the reference annotation "
+            "(at least 3 weeks later); the boundaries of the other annotation stay hidden"
         )
-        self._run_box.valueChanged.connect(self._on_run_changed)
+        self._run_box.currentIndexChanged.connect(self._on_run_changed)
 
         self._features_button = QPushButton("♪  Features")
         self._features_button.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -222,7 +220,6 @@ class AnnotationWindow(QWidget):
         layout.addStretch()
         layout.addWidget(self._features_button)
         layout.addSpacing(10)
-        layout.addWidget(run_label)
         layout.addWidget(self._run_box)
         layout.addSpacing(10)
         layout.addWidget(self._boundary_count_label)
@@ -392,7 +389,7 @@ class AnnotationWindow(QWidget):
 
     @property
     def _run(self) -> int:
-        return int(self._run_box.value())
+        return int(self._run_box.currentData())
 
     def _set_boundary(self, definition: str = "begin") -> None:
         if self._session is None:
@@ -407,9 +404,11 @@ class AnnotationWindow(QWidget):
         if definition == "begin":
             self._flash_boundary_button()
 
-    def _on_run_changed(self, _run: int) -> None:
+    def _on_run_changed(self, _index: int) -> None:
         # Run 2 must stay blind: the feature lanes would show run 1's boundaries.
         self._features_button.setEnabled(self._run == 1)
+        # Only "begin" is repeated; "end" serves the sensitivity run, which reads run 1.
+        self._end_button.setVisible(self._run == 1)
         self._update_boundary_count()
 
     def _show_boundary_dialog(self) -> None:
@@ -426,7 +425,7 @@ class AnnotationWindow(QWidget):
         n = self._session.count_boundaries("begin", self._run)
         n_end = self._session.count_boundaries("end", self._run)
         self._boundary_count_label.setText(
-            f"Run {self._run}: {n} boundar{'ies' if n != 1 else 'y'} set"
+            f"{run_name(self._run)}: {n} boundar{'ies' if n != 1 else 'y'} set"
             + (f"  ·  {n_end} end" if n_end else "")
         )
 
