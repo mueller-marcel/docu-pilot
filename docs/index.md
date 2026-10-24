@@ -1,41 +1,41 @@
 # DocuPilot
 
-DocuPilot zeichnet die Arbeit einer Person in einer Desktop-Anwendung auf –
-Bildschirm, Mikrofon und alle Maus- und Tastaturereignisse – und zerlegt die
-Aufnahme automatisch in **Handlungsschritte**. Eine Handlungsgrenze liegt dort,
-wo das Teilziel der Person wechselt.
+DocuPilot records a person's work in a desktop application –
+screen, microphone and all mouse and keyboard events – and automatically splits the
+recording into **action steps**. An action boundary lies where
+the person's sub-goal changes.
 
-Neben der Segmentierung selbst beantwortet DocuPilot eine Forschungsfrage:
-**Welchen Informationsbeitrag liefert jede der drei Modalitäten zur
-Segmentierung, und ab wann bringt eine weitere Modalität keinen relevanten
-Gewinn mehr?** Dazu wird jede der acht Kombinationen der Modalitäten
-leave-one-session-out gegen eine Referenzannotation ausgewertet und der Beitrag
-jeder Modalität mit Shapley-Werten zerlegt.
+Besides the segmentation itself, DocuPilot answers a research question:
+**What information contribution does each of the three modalities make to
+segmentation, and from which point on does a further modality no longer bring a
+relevant gain?** To this end, each of the eight combinations of the modalities is
+evaluated leave-one-session-out against a reference annotation, and the contribution
+of each modality is decomposed with Shapley values.
 
-Wer DocuPilot zum ersten Mal einsetzt, beginnt mit {doc}`getting-started`;
-wer den Code verstehen oder erweitern will, mit {doc}`architecture/index`.
+If you are using DocuPilot for the first time, start with {doc}`getting-started`;
+if you want to understand or extend the code, start with {doc}`architecture/index`.
 
 ```{mermaid}
 flowchart LR
-    A[Aufnahme<br/>recording.mp4 · events.json] --> B[Annotation<br/>ground_truth.json]
-    A --> C[Segmentierung<br/>Video · Sprache · Ereignisse]
-    C --> D[Fusion & Auswertung<br/>8 Koalitionen, LOSO]
+    A[Recording<br/>recording.mp4 · events.json] --> B[Annotation<br/>ground_truth.json]
+    A --> C[Segmentation<br/>Video · Speech · Events]
+    C --> D[Fusion & evaluation<br/>8 coalitions, LOSO]
     B --> D
-    D --> E[Bericht<br/>Abb. 4.2–4.6]
+    D --> E[Report<br/>figures]
 ```
 
-## Inhalt
+## Contents
 
 ```{toctree}
 :maxdepth: 2
-:caption: Einstieg
+:caption: Getting started
 
 getting-started
 ```
 
 ```{toctree}
 :maxdepth: 2
-:caption: Architektur
+:caption: Architecture
 
 architecture/index
 architecture/recording
@@ -47,7 +47,7 @@ architecture/ui
 
 ```{toctree}
 :maxdepth: 2
-:caption: Konzepte
+:caption: Concepts
 
 concepts/boundaries
 concepts/evidence-curves
@@ -59,7 +59,7 @@ concepts/reproducibility
 
 ```{toctree}
 :maxdepth: 2
-:caption: Referenz
+:caption: Reference
 
 reference/data-formats
 reference/configuration
@@ -70,7 +70,7 @@ reference/api
 
 ```{toctree}
 :maxdepth: 1
-:caption: Entwicklung
+:caption: Development
 
 development
 ```

@@ -11,8 +11,6 @@ from scipy.stats import t
 from docupilot.evaluation import statistics as st
 
 
-# ── Confidence interval ──────────────────────────────────────────────────────
-
 def test_t_interval_matches_textbook_formula():
     est, lo, hi = st.t_interval([1.0, 2.0, 3.0, 4.0, 5.0])
     half = t.ppf(0.975, 4) * math.sqrt(2.5) / math.sqrt(5)
@@ -41,12 +39,10 @@ def test_estimate_orders_sessions_and_carries_the_interval():
     assert (e.est, e.lo, e.hi) == pytest.approx(st.t_interval([0.4, 0.2]))
 
 
-# ── SESOI ────────────────────────────────────────────────────────────────────
-
 def test_sesoi_is_the_mean_of_one_over_boundaries_per_session():
     value, source = st.sesoi_from_reference({"a": [1.0] * 10, "b": [1.0] * 5})
     assert value == pytest.approx((1 / 10 + 1 / 5) / 2)
-    assert "2 Sessions" in source
+    assert "2 sessions" in source
 
 
 def test_sesoi_is_not_one_over_the_mean_count():
@@ -65,15 +61,13 @@ def test_sesoi_needs_a_boundary():
         st.sesoi_from_reference({"a": [], "b": []})
 
 
-# ── Class rule (MA 3.3.3) ────────────────────────────────────────────────────
-
 @pytest.mark.parametrize("lo, hi, expected", [
-    (0.27, 0.37, st.RELEVANT),                 # fully above +SESOI
-    (-0.40, -0.20, st.RELEVANT),               # fully below −SESOI: relevant loss
-    (0.02, 0.08, st.SIGNIFICANT_EQUIVALENT),   # excludes 0, inside the band
-    (-0.05, 0.05, st.EQUIVALENT),              # contains 0, inside the band
-    (0.09, 0.15, st.SIGNIFICANT),              # excludes 0, partly inside
-    (-0.05, 0.20, st.UNDECIDED),               # contains 0, reaches beyond
+    (0.27, 0.37, st.RELEVANT),
+    (-0.40, -0.20, st.RELEVANT),
+    (0.02, 0.08, st.SIGNIFICANT_EQUIVALENT),
+    (-0.05, 0.05, st.EQUIVALENT),
+    (0.09, 0.15, st.SIGNIFICANT),
+    (-0.05, 0.20, st.UNDECIDED),
 ])
 def test_classify_five_cases(lo, hi, expected):
     assert st.classify(lo, hi, 0.11) == expected
@@ -89,8 +83,6 @@ def test_estimate_class_uses_its_interval():
     assert e.cls(0.110) == st.RELEVANT
 
 
-# ── Saturation point k* ──────────────────────────────────────────────────────
-
 def _step(est, lo, hi):
     return st.Estimate("Δ", {}, est, lo, hi)
 
@@ -103,16 +95,15 @@ def test_saturation_after_the_first_modality():
 
 
 def test_no_saturation_when_every_step_reaches_the_sesoi():
-    # The v5 run: means 0.321 / 0.130 / 0.119, all intervals above 0.
     steps = {1: _step(0.321, 0.273, 0.370), 2: _step(0.130, 0.107, 0.152),
              3: _step(0.119, 0.091, 0.148)}
     assert st.saturation_point(steps, 0.110).k_star == 3
 
 
 def test_a_step_needs_both_mean_above_sesoi_and_interval_above_zero():
-    assert not st.relevant_gain(_step(0.12, -0.01, 0.25), 0.11)   # not secured
-    assert not st.relevant_gain(_step(0.10, 0.05, 0.15), 0.11)    # mean below SESOI
-    assert st.relevant_gain(_step(0.11, 0.01, 0.21), 0.11)        # exactly the SESOI
+    assert not st.relevant_gain(_step(0.12, -0.01, 0.25), 0.11)
+    assert not st.relevant_gain(_step(0.10, 0.05, 0.15), 0.11)
+    assert st.relevant_gain(_step(0.11, 0.01, 0.21), 0.11)
 
 
 def test_saturation_point_zero_when_nothing_is_relevant():

@@ -1,70 +1,69 @@
-# Glossar
+# Glossary
 
 ```{glossary}
-Annotationslauf
-  Eine vollständige Annotation einer Session. Lauf 1 ist die Referenz, weitere
-  Läufe sind Wiederholungen.
+Action boundary
+  Point in time at which the person's sub-goal changes; lies at the first
+  perceivable hint of the new sub-goal.
+
+Annotation run
+  A complete annotation of a session. Run 1 is the reference; further runs are
+  repetitions.
 
 Baseline v(∅)
-  Grenzen im festen Abstand der mittleren Segmentlänge, ohne jede Modalität.
-  Nullpunkt der Shapley-Werte.
+  Boundaries at a fixed spacing of the mean segment length, without any modality.
+  Zero point of the Shapley values.
 
 Burst
-  Folge von Eingabeereignissen ohne Pause länger als 2 s.
+  Sequence of input events without a pause longer than 2 s.
 
-Evidenzkurve
-  Wert in [0, 1] je Zeitpunkt, wie stark eine Modalität dort eine Grenze
-  anzeigt. Siehe {doc}`concepts/evidence-curves`.
+Coalition
+  Subset of the modalities that is evaluated jointly; with three modalities
+  there are eight.
+
+Evidence curve
+  Value in [0, 1] per point in time indicating how strongly a modality signals a
+  boundary there. See {doc}`concepts/evidence-curves`.
 
 Fold
-  Ein Durchgang des Leave-one-session-out: eine Session ist Testsession, alle
-  anderen sind Trainingssessions.
+  One pass of the leave-one-session-out: one session is the test session, all
+  others are training sessions.
 
-Handlungsgrenze
-  Zeitpunkt, an dem das Teilziel der Person wechselt; liegt am ersten
-  wahrnehmbaren Hinweis auf das neue Teilziel.
-
-Koalition
-  Teilmenge der Modalitäten, die gemeinsam bewertet wird; mit drei Modalitäten
-  gibt es acht.
+Gain Δ(k)
+  Difference of the saturation curve from k − 1 to k modalities.
 
 Lane
-  Gespeicherte Evidenzkurve einer Modalität für die Anzeige im Merkmalsdialog.
+  Stored evidence curve of a modality for display in the feature dialog.
 
-Non-Maximum-Suppression (NMS)
-  Von zwei vorhergesagten Grenzen, die näher als 2 s beieinander liegen, bleibt
-  nur die stärkere.
+Lead time
+  Distance from the start of a sentence to the reference boundary, measured per fold.
 
-Rohergebnis
-  Teures Zwischenergebnis einer Modalität vor dem Zeichnen der Kurve: SSIM-Scan,
-  Transkript mit Urteilen, Bursts.
+Non-maximum suppression (NMS)
+  Of two predicted boundaries that lie closer than 2 s to each other, only the
+  stronger one remains.
 
-Ruhephase
-  Folge von Videobildern mit SSIM ≥ θ zum Vorgänger, mindestens d Sekunden lang.
+Raw result
+  Expensive intermediate result of a modality before the curve is drawn: SSIM scan,
+  transcript with judgements, bursts.
+
+Rest phase
+  Sequence of video frames with SSIM ≥ θ to the predecessor, at least d seconds long.
+
+Saturation point k*
+  Last number of modalities whose addition still yields a relevant gain.
 
 SESOI
-  Smallest effect size of interest: eine zusätzlich richtig erkannte Grenze, im
-  Mittel 1/n über die Sessions.
+  Smallest effect size of interest: one additional correctly detected boundary,
+  on average 1/n across the sessions.
 
-Shapley-Wert
-  Mittlerer marginaler Beitrag einer Modalität über alle Reihenfolgen, in denen
-  die Modalitäten hinzukommen können.
+Shapley value
+  Mean marginal contribution of a modality over all orders in which the
+  modalities can be added.
 
-Sättigungspunkt k*
-  Letzte Anzahl an Modalitäten, deren Hinzunahme noch einen relevanten Zugewinn
-  bringt.
+Sub-goal
+  What a person wants to achieve with a sequence of finer actions (Kurby &
+  Zacks 2008); see {doc}`concepts/boundaries`.
 
-Teilziel
-  Was eine Person mit einer Folge feinerer Handlungen erreichen will (Kurby &
-  Zacks 2008); siehe {doc}`concepts/boundaries`.
-
-Toleranz τ
-  Höchster Abstand, mit dem eine Vorhersage noch als Treffer einer
-  Referenzgrenze zählt; 1 s.
-
-Vorlauf
-  Abstand vom Satzbeginn bis zur Referenzgrenze, je Fold gemessen.
-
-Zugewinn Δ(k)
-  Differenz der Sättigungskurve von k − 1 zu k Modalitäten.
+Tolerance τ
+  Largest distance at which a prediction still counts as a hit of a
+  reference boundary; 1 s.
 ```

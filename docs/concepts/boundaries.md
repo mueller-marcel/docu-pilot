@@ -1,66 +1,67 @@
-# Handlungsgrenzen und Referenzannotation
+# Action boundaries and reference annotation
 
-## Teilziel und Grenze
+## Sub-goal and boundary
 
-DocuPilot folgt der Ereignissegmentierung nach **Kurby & Zacks (2008)**:
-Menschen nehmen eine laufende Tätigkeit hierarchisch wahr. Die Aufgabe gliedert
-sich in **Teilziele**, und jedes Teilziel wird durch eine Folge feinerer
-Handlungen ausgeführt, die alle ihm dienen.
+DocuPilot follows the event segmentation account of **Kurby & Zacks (2008)**:
+people perceive an ongoing activity hierarchically. The task is divided into
+**sub-goals**, and each sub-goal is carried out through a sequence of finer
+actions, all of which serve it.
 
-- In der Aufgabe „Bericht vorbereiten“ wären „Diagramm einfügen“, „Überschrift
-  formatieren“ oder „Datei unter neuem Namen speichern“ Teilziele.
-- Klicken, Tippen, ein Menü oder einen Dialog öffnen, Scrollen oder ein
-  Ergebnis prüfen sind feinere Handlungen *innerhalb* eines Teilziels.
-- Einen Fehler zu korrigieren, etwa einen Tippfehler, ändert das Teilziel nicht.
+- In the task "prepare a report", "insert a chart", "format a heading" or
+  "save the file under a new name" would be sub-goals.
+- Clicking, typing, opening a menu or a dialog, scrolling or checking a
+  result are finer actions *within* a sub-goal.
+- Correcting a mistake, such as a typo, does not change the sub-goal.
 
-Eine **Handlungsgrenze** liegt dort, wo das Teilziel wechselt: wo die Person ein
-Teilziel nicht mehr verfolgt und das nächste beginnt. Ein Handlungsschritt ist
-das Segment zwischen zwei Grenzen.
+An **action boundary** lies where the sub-goal changes: where the person stops
+pursuing one sub-goal and begins the next. An action step is the segment
+between two boundaries.
 
-Die Segmentierung sucht Grenzen, keine benannten Abschnitte – wie *Generic Event
-Boundary Detection* (Shou et al. 2021). Vordefinierte Aktionslabels ließen sich
-über Anwendungen hinweg nicht sinnvoll festlegen.
+The segmentation looks for boundaries, not for labelled sections – like *Generic
+Event Boundary Detection* (Shou et al. 2021). Predefined action labels could not
+be defined meaningfully across applications.
 
-## Wo genau die Grenze liegt
+## Where exactly the boundary lies
 
-Die Referenzgrenze liegt am **ersten wahrnehmbaren Hinweis** auf das neue
-Teilziel, so wie ein Beobachter es sieht, der Bild, Ton und Eingaben zugleich
-wahrnimmt:
+The reference boundary lies at the **first perceivable hint** of the new
+sub-goal, as seen by an observer who perceives image, sound and input
+simultaneously:
 
-- ein Satz, der den Schritt ankündigt („Jetzt füge ich …“),
-- die erste Bildschirmänderung, die dem neuen Teilziel dient.
+- a sentence announcing the step ("Now I'll insert …"),
+- the first screen change that serves the new sub-goal.
 
-Ein Menü oder Dialog zu öffnen ist für sich kein Wechsel; es markiert einen
-nur, wenn es die erste Handlung für ein neues Teilziel ist. Eine Denkpause ohne
-wahrnehmbare Änderung setzt keine Grenze. Auch das erste Teilziel einer
-Aufnahme beginnt mit einer Grenze – es folgt auf den ruhigen Beginn.
+Opening a menu or dialog is not a change in itself; it marks one only if it is
+the first action towards a new sub-goal. A pause for thought without a
+perceivable change does not set a boundary. The first sub-goal of a recording
+also begins with a boundary – it follows the quiet start.
 
-Diese Definition ist in Code die Grenzdefinition `begin`. Die Definition `end`
-(Grenze am Ende eines Schritts) wird mitgeführt, ist aber nicht die primäre.
+In code, this definition is the boundary definition `begin`. The definition
+`end` (boundary at the end of a step) is carried along but is not the primary
+one.
 
-Dieselbe Definition steht – als `SUBGOAL_DEFINITION` – in beiden
-Modellprompts, damit die Modelle dieselbe Frage beantworten wie die Annotation
+The same definition appears – as `SUBGOAL_DEFINITION` – in both model prompts,
+so that the models answer the same question as the annotation
 ({doc}`../reference/model-prompts`).
 
-## Referenzannotation
+## Reference annotation
 
-Die Annotation entsteht im Annotationsfenster und liegt in
-`ground_truth.json` ({doc}`../reference/data-formats`). Jeder Eintrag nennt
-seine Definition und seinen **Lauf**: Lauf 1 ist die Referenz, Lauf 2, 3, …
-sind Wiederholungen. Alle Einträge zählen gleich; es wird nicht nach Herkunft
-der Daten unterschieden.
+The annotation is created in the annotation window and stored in
+`ground_truth.json` ({doc}`../reference/data-formats`). Each entry states its
+definition and its **run**: run 1 is the reference, runs 2, 3, … are
+repetitions. All entries count equally; no distinction is made by the origin
+of the data.
 
-Beim Lesen gelten zwei Randregeln des Leitfadens
+When reading, two edge rules of the guideline apply
 ({py:func}`~docupilot.evaluation.dataset.apply_edge_rules`):
 
-- Grenzen in den ersten oder letzten 0,3 s entfallen.
-- Grenzen, die weniger als 0,1 s auseinanderliegen, werden zu ihrem Mittel
-  zusammengelegt – ein doppelter Klick auf den Annotationsknopf ist eine Grenze.
+- Boundaries in the first or last 0.3 s are dropped.
+- Boundaries less than 0.1 s apart are merged to their mean – a double click
+  on the annotation button is one boundary.
 
-## Zeitliche Unschärfe
+## Temporal uncertainty
 
-Eine Grenze ist kein exakt reproduzierbarer Zeitpunkt: Zwischen dem Hinweis und
-dem Tastendruck liegt die Reaktionszeit, und verschiedene Hinweise auf
-denselben Wechsel liegen Sekundenbruchteile auseinander. Die Auswertung misst
-deshalb nicht punktgenau, sondern mit einer Toleranz τ
+A boundary is not an exactly reproducible instant: the reaction time lies
+between the hint and the key press, and different hints of the same change lie
+fractions of a second apart. The evaluation therefore does not measure
+point-exactly but with a tolerance τ
 ({doc}`metrics`).

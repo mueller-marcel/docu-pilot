@@ -1,110 +1,110 @@
-# Informationsbeitrag und Statistik
+# Information contribution and statistics
 
-Module: {py:mod}`docupilot.evaluation.analysis`,
+Modules: {py:mod}`docupilot.evaluation.analysis`,
 {py:mod}`docupilot.evaluation.statistics`.
 
-Die Auswertung beantwortet drei Teilfragen:
+The evaluation answers three sub-questions:
 
-1. Welche Segmentierungsqualität erreichen die Modalitäten einzeln?
-2. Welchen marginalen Beitrag leistet jede Modalität in Kombination mit den
-   anderen?
-3. Ab welcher Anzahl Modalitäten bringt eine weitere keinen relevanten Gewinn
-   mehr?
+1. What segmentation quality do the modalities achieve individually?
+2. What marginal contribution does each modality make in combination with the
+   others?
+3. From what number of modalities onwards does a further one no longer yield
+   a relevant gain?
 
-## Pro Session rechnen
+## Computing per session
 
-Shapley-Werte und Zugewinne sind Linearkombinationen der Koalitionswerte
-$v(S)$. Sie werden deshalb **je Session** berechnet und erst dann gemittelt –
-wie jede andere Messgröße. So bekommt jede Größe eine Streuung über die
-Sessions und damit ein Konfidenzintervall.
+Shapley values and gains are linear combinations of the coalition values
+$v(S)$. They are therefore computed **per session** and only then averaged –
+like every other measure. In this way every quantity obtains a spread across
+the sessions and hence a confidence interval.
 
-## Konfidenzintervall
+## Confidence interval
 
-Für jede Größe mit Sessionwerten $x_1, \dots, x_n$:
+For every quantity with session values $x_1, \dots, x_n$:
 
 $$
-\bar x \pm t_{0{,}975;\,n-1} \cdot \frac{s}{\sqrt n}
+\bar x \pm t_{0.975;\,n-1} \cdot \frac{s}{\sqrt n}
 $$
 
-– das 95-%-t-Intervall über die Sessions
-({py:func}`~docupilot.evaluation.statistics.t_interval`). Es gibt genau ein
-Intervall je Größe, ohne Korrektur für Mehrfachvergleiche.
+– the 95 % t-interval across the sessions
+({py:func}`~docupilot.evaluation.statistics.t_interval`). There is exactly one
+interval per quantity, without correction for multiple comparisons.
 
-## Shapley-Werte (Teilfrage 2)
+## Shapley values (Sub-question 2)
 
-Der Shapley-Wert einer Modalität $i$ ist ihr mittlerer Zugewinn über alle
-Reihenfolgen, in denen die Modalitäten hinzukommen können (Shapley 1953):
+The Shapley value of a modality $i$ is its mean gain over all orders in which
+the modalities can be added (Shapley 1953):
 
 $$
 \phi_i = \sum_{S \subseteq N \setminus \{i\}}
 \frac{|S|!\,(n - |S| - 1)!}{n!}\,\bigl(v(S \cup \{i\}) - v(S)\bigr)
 $$
 
-mit $v(S)$ = mittlerer F1 der Koalition $S$. Mit allen acht Koalitionen ist der
-Wert exakt, ohne Stichprobenfehler. Er ist die einzige Zerlegung, die vier
-Forderungen zugleich erfüllt:
+with $v(S)$ = mean F1 of coalition $S$. With all eight coalitions the value is
+exact, without sampling error. It is the only decomposition that satisfies
+four requirements simultaneously:
 
-- **Effizienz** – die Werte summieren sich zu $v(N) - v(\varnothing)$; die
-  Pipeline prüft das je Session und meldet Abweichungen,
-- **Symmetrie** – gleichwertige Modalitäten bekommen gleiche Werte,
-- **Nullspieler** – eine Modalität ohne Beitrag bekommt null,
-- **Additivität**.
+- **Efficiency** – the values sum to $v(N) - v(\varnothing)$; the pipeline
+  checks this per session and reports deviations,
+- **Symmetry** – equivalent modalities receive equal values,
+- **Null player** – a modality without contribution receives zero,
+- **Additivity**.
 
-Redundante Modalitäten – die dieselben Grenzen sehen – teilen sich ihren
-Beitrag: Der Shapley-Wert ist dann kleiner als der Gewinn der Modalität allein.
+Redundant modalities – those that see the same boundaries – share their
+contribution: the Shapley value is then smaller than the gain of the modality
+alone.
 
-## Sättigung (Teilfrage 3)
+## Saturation (Sub-question 3)
 
-Die **Sättigungskurve** ist der mittlere F1 aller Koalitionen einer Größe $k$:
+The **saturation curve** is the mean F1 of all coalitions of a size $k$:
 
 $$
 \bar v(k) = \operatorname{mean}_{|S| = k} v(S), \qquad k = 0, \dots, 3,
 $$
 
-und der **Zugewinn** der $k$-ten Modalität ist $\Delta(k) = \bar v(k) - \bar v(k-1)$
-– je Session gebildet, dann gemittelt
+and the **gain** of the $k$-th modality is $\Delta(k) = \bar v(k) - \bar v(k-1)$
+– computed per session, then averaged
 ({py:func}`~docupilot.evaluation.statistics.steps_per_session`).
 
 ```{note}
-$\bar v(k)$ mittelt über alle Koalitionen einer Größe, auch über solche ohne
-die stärkste Modalität. $\Delta(k)$ beantwortet deshalb „Was bringt eine
-weitere Modalität im Mittel über alle Reihenfolgen?“, nicht „Was bringt eine
-weitere nach der besten?“. Beide Lesarten können verschieden ausfallen.
+$\bar v(k)$ averages over all coalitions of a size, including those without
+the strongest modality. $\Delta(k)$ therefore answers "What does a further
+modality yield on average over all orders?", not "What does a further one
+yield after the best?". The two readings can differ.
 ```
 
 ## SESOI
 
-Die *smallest effect size of interest* ist **eine zusätzlich richtig erkannte
-Grenze**:
+The *smallest effect size of interest* is **one additional correctly detected
+boundary**:
 
 $$
 \text{SESOI} = \frac1{|S|} \sum_{s} \frac1{n_s}
 $$
 
-mit $n_s$ = Zahl der Referenzgrenzen der Session $s$
-({py:func}`~docupilot.evaluation.statistics.sesoi_from_reference`). Eine
-zusätzlich gefundene Grenze hebt den Recall einer Session um genau $1/n_s$ und
-ihren F1 um $2/(n_s + \hat n_s)$ – bei passender Grenzanzahl ebenfalls
-$1/n_s$. Die SESOI hängt nur von der Referenz ab, wird vor dem Lauf
-festgelegt und ist für alle Vergleiche gleich (Lakens et al. 2018: kleinste
-Einheit des Messinstruments, in Rohwerten).
+with $n_s$ = number of reference boundaries of session $s$
+({py:func}`~docupilot.evaluation.statistics.sesoi_from_reference`). One
+additionally found boundary raises the recall of a session by exactly $1/n_s$
+and its F1 by $2/(n_s + \hat n_s)$ – likewise $1/n_s$ when the number of
+boundaries matches. The SESOI depends only on the reference, is fixed before
+the run and is the same for all comparisons (Lakens et al. 2018: smallest unit
+of the measuring instrument, in raw values).
 
-## Klassen
+## Classes
 
-Jeder Zugewinn $\Delta(k)$ wird anhand seines Intervalls $[l, h]$ gegen $0$ und
-$\pm$SESOI eingeordnet ({py:func}`~docupilot.evaluation.statistics.classify`):
+Each gain $\Delta(k)$ is classified by its interval $[l, h]$ against $0$ and
+$\pm$SESOI ({py:func}`~docupilot.evaluation.statistics.classify`):
 
-| Klasse | Bedingung | Bedeutung |
+| Class | Condition | Meaning |
 |---|---|---|
-| R | ganz außerhalb ±SESOI | statistisch und praktisch relevant |
-| S | schließt 0 aus, teils innerhalb ±SESOI | statistisch gesichert |
-| SÄ | schließt 0 aus, ganz innerhalb ±SESOI | gesichert, aber kleiner als eine Grenze |
-| Ä | enthält 0, ganz innerhalb ±SESOI | vernachlässigbar |
-| U | enthält 0, reicht über ±SESOI hinaus | keine Aussage |
+| R | entirely outside ±SESOI | statistically and practically relevant |
+| S | excludes 0, partly within ±SESOI | statistically significant |
+| SE | excludes 0, entirely within ±SESOI | significant, but smaller than one boundary |
+| E | contains 0, entirely within ±SESOI | negligible |
+| U | contains 0, extends beyond ±SESOI | no conclusion |
 
-## Sättigungspunkt k*
+## Saturation point k*
 
-Ein Schritt $\Delta(k)$ ist ein **relevanter Zugewinn**, wenn sein Mittel
-mindestens die SESOI erreicht und sein Intervall über 0 liegt. $k^*$ ist der
-letzte relevante Schritt (0, wenn keiner relevant ist). $k^* = 3$ heißt: keine
-Sättigung im gemessenen Bereich.
+A step $\Delta(k)$ is a **relevant gain** if its mean reaches at least the
+SESOI and its interval lies above 0. $k^*$ is the last relevant step (0 if
+none is relevant). $k^* = 3$ means: no saturation within the measured range.

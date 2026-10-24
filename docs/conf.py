@@ -8,16 +8,12 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _PROJECT = tomllib.loads((_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
 
-# ── Project ──────────────────────────────────────────────────────────────────
-
 project = "DocuPilot"
 author = "Marcel Müller"
 copyright = f"2026, {author}"
 release = _PROJECT["version"]
 version = release
-language = "de"
-
-# ── General ──────────────────────────────────────────────────────────────────
+language = "en"
 
 extensions = [
     "myst_parser",
@@ -44,8 +40,6 @@ myst_enable_extensions = [
 myst_heading_anchors = 3
 myst_fence_as_directive = ["mermaid"]
 
-# ── API reference (sphinx-autoapi) ───────────────────────────────────────────
-#
 # AutoAPI reads the sources statically. The package is never imported, so the
 # reference builds without Qt, ffmpeg, Whisper or an API key.
 
@@ -70,16 +64,12 @@ autodoc_typehints = "description"
 # rather than letting docstring style break the build.
 suppress_warnings = ["autoapi.python_import_resolution", "docutils"]
 
-# ── Cross references ─────────────────────────────────────────────────────────
-
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
     "numpy": ("https://numpy.org/doc/stable/", None),
     "scipy": ("https://docs.scipy.org/doc/scipy/", None),
     "sklearn": ("https://scikit-learn.org/stable/", None),
 }
-
-# ── HTML ─────────────────────────────────────────────────────────────────────
 
 html_theme = "furo"
 html_title = f"DocuPilot {release}"

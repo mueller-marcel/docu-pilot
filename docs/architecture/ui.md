@@ -1,34 +1,34 @@
-# Oberfläche
+# User interface
 
-Modul: {py:mod}`docupilot.ui` (PySide6). Die Oberfläche rechnet nichts selbst:
-Sie startet die Pipeline in Hintergrund-Threads und zeigt deren Ergebnisse.
+Module: {py:mod}`docupilot.ui` (PySide6). The user interface computes nothing itself:
+it starts the pipeline in background threads and displays its results.
 
-| Fenster | Klasse | Aufgabe |
+| Window | Class | Purpose |
 |---|---|---|
-| Hauptfenster | {py:class}`~docupilot.ui.MainWindow.MainWindow` | Bildschirm und Mikrofon wählen, Aufnahme starten/stoppen; Menüs **Datei** und **Auswertung** |
-| Annotation | {py:class}`~docupilot.ui.AnnotationWindow.AnnotationWindow` | Video abspielen, Grenzen setzen (Beginn/Ende), Merkmalsdialog öffnen |
-| Merkmalsdialog | {py:class}`~docupilot.ui.widgets.FeatureDialog.FeatureDialog` | je Modalität eine Zeitleiste mit Evidenzkurve neben den annotierten Grenzen |
-| Auswertung | {py:class}`~docupilot.ui.ExperimentWindow.ExperimentWindow` | Korpus prüfen, Lauf starten, Bericht anzeigen, PDF/CSV exportieren, Caches löschen |
+| Main window | {py:class}`~docupilot.ui.MainWindow.MainWindow` | Select screen and microphone, start/stop recording; menus **File** and **Evaluation** |
+| Annotation | {py:class}`~docupilot.ui.AnnotationWindow.AnnotationWindow` | Play video, set boundaries (begin/end), open feature dialog |
+| Feature dialog | {py:class}`~docupilot.ui.widgets.FeatureDialog.FeatureDialog` | one timeline per modality with evidence curve next to the annotated boundaries |
+| Evaluation | {py:class}`~docupilot.ui.ExperimentWindow.ExperimentWindow` | Check corpus, start run, display report, export PDF/CSV, delete caches |
 
 ## Threads
 
-Segmentierung und Experiment dauern Minuten und rufen externe Modelle auf. Sie
-laufen in eigenen `QThread`-Workern (`_FeatureWorker`, `_ExperimentWorker`),
-die Fortschritt, Ergebnis und Fehler als Qt-Signale melden und Abbruch über ein
-Flag unterstützen, das die Pipeline zwischen den Schritten abfragt. Der
-UI-Thread bleibt dadurch bedienbar.
+Segmentation and experiment take minutes and call external models. They
+run in dedicated `QThread` workers (`_FeatureWorker`, `_ExperimentWorker`),
+which report progress, result and errors as Qt signals and support
+cancellation via a flag that the pipeline checks between steps. The
+UI thread thus remains responsive.
 
-## Bericht in Fenster und PDF
+## Report in window and PDF
 
-Fenster und PDF zeigen dieselben Abschnitte aus
-{py:func}`docupilot.evaluation.report.sections`. Die Abbildung von
-Berichtszahlen auf Diagramme liegt genau einmal in
+Window and PDF show the same sections from
+{py:func}`docupilot.evaluation.report.sections`. The mapping of
+report numbers to charts lives exactly once in
 {py:mod}`docupilot.ui.report_view`:
 
-| Diagramm | Widget |
+| Chart | Widget |
 |---|---|
-| Teilfrage 1, Teilfrage 2 (F1 je Kombination, Shapley), Teilfrage 3 (Zugewinne) | {py:class}`~docupilot.ui.widgets.BarChartWidget.BarChartWidget` – waagerechte Balken mit 95-%-Intervall, optional ±SESOI-Band |
-| Teilfrage 3 (Sättigungskurve) | {py:class}`~docupilot.ui.widgets.SaturationChartWidget.SaturationChartWidget` – Linie mit Zuwächsen zwischen den Punkten |
+| Sub-question 1, Sub-question 2 (F1 per combination, Shapley), Sub-question 3 (gains) | {py:class}`~docupilot.ui.widgets.BarChartWidget.BarChartWidget` – horizontal bars with 95 % interval, optional ±SESOI band |
+| Sub-question 3 (saturation curve) | {py:class}`~docupilot.ui.widgets.SaturationChartWidget.SaturationChartWidget` – line with increments between the points |
 
-{py:func}`~docupilot.ui.ReportPdfWriter.write_report_pdf` rendert dieselben
-Widgets ohne Bildschirm in ein paginiertes A4-PDF.
+{py:func}`~docupilot.ui.ReportPdfWriter.write_report_pdf` renders the same
+widgets off-screen into a paginated A4 PDF.

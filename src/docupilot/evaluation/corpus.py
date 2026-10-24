@@ -98,23 +98,23 @@ def describe(scan: CorpusScan) -> str:
     """
     usable = len(scan.usable)
     skipped = len(scan.sessions) - usable
-    parts = [f"{scan.root}  ·  {usable} Sessions mit Grenzen „Beginn“"]
+    parts = [f"{scan.root}  ·  {usable} sessions with 'begin' boundaries"]
     if skipped:
-        parts.append(f"{skipped} ohne „Beginn“-Annotation übersprungen")
+        parts.append(f"{skipped} without 'begin' annotation skipped")
     parts.append(
-        f"⚠ {scan.without_video_cache} ohne Video-Cache — dieser Lauf erzeugt neue "
-        f"VLM-Aufrufe (bis zu 400 je Session)"
+        f"⚠ {scan.without_video_cache} without video cache — this run makes new "
+        f"VLM calls (up to 400 per session)"
         if scan.without_video_cache else
-        "Video-Urteile gecacht"
+        "video judgements cached"
     )
-    parts.append(f"{scan.retest_sessions} mit Wiederholungsannotation")
+    parts.append(f"{scan.retest_sessions} with repeat annotation")
     parts.append(
-        "„Ende“ vollständig annotiert — Sensitivitätslauf möglich"
+        "'end' fully annotated — sensitivity run possible"
         if scan.end_definition_available else
-        "„Ende“ nicht in allen Sessions — kein Definitions-Sensitivitätslauf"
+        "'end' not in every session — no definition sensitivity run"
     )
     if not scan.enough_sessions:
-        parts.append("⚠ mindestens zwei Sessions nötig (Leave-one-session-out)")
+        parts.append("⚠ at least two sessions needed (leave-one-session-out)")
     return "  ·  ".join(parts)
 
 

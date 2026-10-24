@@ -46,7 +46,7 @@ class _Page:
             QRectF(self.margin, self.page_h - self.margin + 20,
                    self.content_w, self.margin - 30),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
-            f"DocuPilot · Auswertung · Seite {self.number}",
+            f"DocuPilot · Evaluation · Page {self.number}",
         )
         self.painter.restore()
 
@@ -150,7 +150,7 @@ def write_report_pdf(path: Path, report: rep.Report, corpus_root: Path | None) -
         page.para(hint, f_hint, "#666666", gap_after=6)
 
     page.footer()
-    page.para("DocuPilot – Informationsbeitrag der Modalitäten zur Segmentierung",
+    page.para("DocuPilot – Information contribution of the modalities to segmentation",
               f_title, "#111111", gap_after=6)
     stamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm")
     page.para("\n".join(rep.header_lines(report, corpus_root, stamp)),

@@ -20,24 +20,22 @@ from docupilot.ui.widgets.FeatureTimelineWidget import FeatureTimelineWidget
 
 _GROUND_TRUTH_COLOR = "#059669"
 
-# How each modality is presented. The keys are the segmentation package's
-# modality names; everything in the value is a UI decision and lives only here.
 _LANES: dict[str, dict[str, str]] = {
     "events": {
-        "section": "  ►  Events (Ruhe davor · Abschluss-Taste · Klassenwechsel, am Burst-Beginn)",
-        "label":   "Event-Score  ·  gewichtetes Maximum der drei Teilkurven",
+        "section": "  ►  Events (rest before · completion key · class change, at burst onset)",
+        "label":   "Event score  ·  weighted maximum of the three sub-curves",
         "name":    "Events",
         "color":   FeatureTimelineWidget.EVENT_COLOR,
     },
     "audio": {
-        "section": "  ►  Audio (Ansagen, LLM-bewertet; Peak = Anker + Versatz)",
-        "label":   "Audio-Score  ·  Beginn des angesagten Schritts erwartet",
+        "section": "  ►  Audio (utterances, LLM-judged; peak = anchor + offset)",
+        "label":   "Audio score  ·  begin of the announced step expected",
         "name":    "Audio",
         "color":   "#a78bfa",
     },
     "video": {
-        "section": "  ►  Video (SSIM-Ruhephasen + VLM auf Vorher/Nachher: neues Teilziel?, am Änderungsbeginn)",
-        "label":   "Video-Boundary-Score  ·  beginnt ein neues Teilziel?",
+        "section": "  ►  Video (SSIM rest phases + VLM on before/after: new sub-goal?, at change onset)",
+        "label":   "Video boundary score  ·  does a new sub-goal begin?",
         "name":    "Video",
         "color":   "#fb923c",
     },
@@ -53,9 +51,9 @@ class _FeatureWorker(QObject):
     # ("__init__() should return None, not 'NoneType'") — reported once per lane,
     # because segment() runs the callback inside its own try. A key the receiver
     # looks up needs no wrapper.
-    lane_ready  = Signal(str)           # modality; the evidence via evidence()
-    lane_failed = Signal(str, str)      # (modality, message)
-    progress    = Signal(str, int, int)  # (modality, done, total)
+    lane_ready  = Signal(str)
+    lane_failed = Signal(str, str)
+    progress    = Signal(str, int, int)
     finished    = Signal()
 
     def __init__(self, session: RecordingSession) -> None:
@@ -116,7 +114,7 @@ class FeatureDialog(QDialog):
         :param parent: Parent widget.
         """
         super().__init__(parent)
-        self.setWindowTitle("Feature-Verläufe · Handlungsgrenzen je Modalität")
+        self.setWindowTitle("Feature curves · Action boundaries per modality")
         self.setMinimumSize(820, 700)
         self.resize(1100, 950)
         self.setModal(False)
@@ -128,7 +126,6 @@ class FeatureDialog(QDialog):
         # has probed the file; _sync_cursor corrects that.
         self._duration_ms = float(player.duration()) or duration_ms
 
-        # The primary annotation: definition "begin", run 1.
         self._ground_truth_markers = session.ground_truth_markers("begin", 1)
         self._boundaries_ms = [t_ms for t_ms, _ in self._ground_truth_markers]
 
@@ -147,17 +144,15 @@ class FeatureDialog(QDialog):
         self._worker: _FeatureWorker | None = None
         QTimer.singleShot(50, self._start_worker)
 
-    # ── Construction ─────────────────────────────────────────────────────
-
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(14, 14, 14, 10)
         root.setSpacing(8)
 
         header = QLabel(
-            "Audio (violett)  ·  Video (orange)  ·  Events (hellblau)  ·  "
-            "gestrichelt = gesetzte Grenzen  ·  Klick auf Timeline → Sprung im Video"
-            + ("  ·  Ground Truth (grün)" if self._ground_truth_markers else "")
+            "Audio (violet)  ·  Video (orange)  ·  Events (light blue)  ·  "
+            "dashed = boundaries set  ·  click on timeline → jump in video"
+            + ("  ·  ground truth (green)" if self._ground_truth_markers else "")
         )
         header.setStyleSheet("color:#555; font-size:11px;")
         root.addWidget(header)
@@ -176,7 +171,7 @@ class FeatureDialog(QDialog):
 
         if self._ground_truth_markers:
             gt = self._add_lane(
-                f"  ►  Ground Truth ({len(self._ground_truth_markers)} gesetzte Grenzen)",
+                f"  ►  Ground Truth ({len(self._ground_truth_markers)} boundaries set)",
                 "Ground Truth", _GROUND_TRUTH_COLOR, height=100,
             )
             gt.set_events(self._ground_truth_markers)
@@ -196,11 +191,11 @@ class FeatureDialog(QDialog):
         scroll.setWidget(lanes_widget)
         root.addWidget(scroll, stretch=1)
 
-        self._status = QLabel("Wird berechnet …")
-        self._status.setStyleSheet("color:#666; font-size:10px;")  # gut lesbar auf Weiß
+        self._status = QLabel("Computing …")
+        self._status.setStyleSheet("color:#666; font-size:10px;")
         root.addWidget(self._status)
 
-        close_btn = QPushButton("Schließen")
+        close_btn = QPushButton("Close")
         close_btn.setStyleSheet(
             "QPushButton{background:#fff;color:#333;border:1px solid #ccc;"
             "border-radius:6px;padding:5px 14px;font-size:12px;}"
@@ -247,8 +242,6 @@ class FeatureDialog(QDialog):
         self._canvases.append(canvas)
         return canvas
 
-    # ── Worker lifecycle ─────────────────────────────────────────────────
-
     def _start_worker(self) -> None:
         """Kick off segmentation on a background thread."""
         self._set_duration(float(self._player.duration()))
@@ -282,20 +275,18 @@ class FeatureDialog(QDialog):
         )
         canvas.set_detected_boundaries([t * 1000.0 for t in evidence.boundaries_s])
         self._lane_status[modality] = (
-            f"{_LANES[modality]['name']}: {len(evidence.boundaries_s)} Grenzen"
+            f"{_LANES[modality]['name']}: {len(evidence.boundaries_s)} boundaries"
         )
         self._refresh_status()
 
     def _on_lane_failed(self, modality: str, message: str) -> None:
         self._lanes[modality].set_curve([], [], _LANES[modality]["color"])
-        self._lane_status[modality] = f"{_LANES[modality]['name']}: Fehler ({message})"
+        self._lane_status[modality] = f"{_LANES[modality]['name']}: error ({message})"
         self._refresh_status()
 
     def _on_progress(self, modality: str, done: int, total: int) -> None:
         self._lane_status[modality] = f"{_LANES[modality]['name']}: {done}/{total}"
         self._refresh_status()
-
-    # ── Playback ─────────────────────────────────────────────────────────
 
     def _set_duration(self, duration_ms: float) -> None:
         """

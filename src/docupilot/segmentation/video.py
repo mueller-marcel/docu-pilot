@@ -8,7 +8,7 @@ the first visible hint of the new sub-goal (MA, 3.1.3).
 
 Reads only the video stream, so the modality stays independent for the ablation.
 
-Two stages (C8):
+Two stages:
 
     extract_raw(session)        the SSIM scan — model-free, cached, independent
                                 of every fold
@@ -44,30 +44,24 @@ MODALITY = "video"
 
 _ACTIVITY_GRID = 8
 
-# TECHNICAL. SSIM after Wang et al. (2004): Gaussian window σ = 1.5 (11 × 11),
+# SSIM after Wang et al. (2004): Gaussian window σ = 1.5 (11 × 11),
 # C1 = (0.01 L)², C2 = (0.03 L)² for L = 255 grey levels.
 _SSIM_SIGMA = 1.5
 _SSIM_C1 = (0.01 * 255) ** 2
 _SSIM_C2 = (0.03 * 255) ** 2
 
-# SET, not tuned. How far INTO a rest its state frame is sampled; the first
-# still frame can still show a fading animation.
+# Set, not tuned: the first still frame of a rest can still show a fading
+# animation.
 _SETTLE_OFFSET_S = 0.2
 
-# SET, not tuned. Mean grey-level difference above which a tile counts as
-# changed between BEFORE and AFTER — for the box, and to skip a change that
-# left the screen as it was.
+# Set, not tuned.
 _PIXEL_CHANGE_EPS = 1.0
 
-# TECHNICAL. Budget cap per session and (θ, d). Whether it was hit is reported.
 _MAX_CALLS = 400
 
-# The SSIM scan: a pure function of the recording bytes and the measurement
-# constants, kept beside the recording.
 SSIM_FILE = "video_ssim.npz"
 _SSIM_FORMAT = 1
 
-# What the VLM said about each pair, kept beside the recording.
 VERDICT_CACHE_FILE = "gui_vlm_cache.json"
 
 Region = tuple[float, float, float, float]
@@ -77,10 +71,10 @@ Region = tuple[float, float, float, float]
 class Change:
     """The screen moving from one rest to the next."""
 
-    rest_start: int          # first frame of the rest the change leaves
-    onset: int               # first frame that moves again — where the new action begins
-    before: int              # state frame of the rest it leaves (BEFORE)
-    after: int               # state frame of the rest it reaches (AFTER)
+    rest_start: int
+    onset: int
+    before: int
+    after: int
 
 
 @dataclass(frozen=True)
@@ -111,15 +105,13 @@ class VideoRaw:
 
     recording_path: Path
     session_dir: Path
-    times_s: np.ndarray      # (n,) float64 — presentation time of each frame, session clock
-    sim: np.ndarray          # (n,) float32 — smallest tile SSIM to the previous frame; sim[0] = 1
+    times_s: np.ndarray
+    sim: np.ndarray
     reuse_verdicts: bool = True
     on_progress: Callable[[int, int], None] | None = None
     is_cancelled: Callable[[], bool] | None = None
     judged: dict[tuple[float, float], Judged] = field(default_factory=dict)
 
-
-# ── Step 1: similarity signal ─────────────────────────────────────────────────
 
 def _gray(bgr: np.ndarray) -> np.ndarray:
     """A frame as it is measured: at the width the model sees, grey, float32."""
@@ -182,8 +174,6 @@ def frame_similarity(gray_frames: Iterable[np.ndarray]) -> np.ndarray:
     return np.asarray(sim, dtype=np.float32)
 
 
-# ── Step 2: rests and changes ─────────────────────────────────────────────────
-
 def rest_phases(
     times_s: np.ndarray, sim: np.ndarray, theta: float, min_rest_s: float
 ) -> list[tuple[int, int]]:
@@ -233,8 +223,6 @@ def changes(
         for (k0, j0), (k1, j1) in zip(ph, ph[1:])
     ]
 
-
-# ── Step 3: the verdict on each BEFORE|AFTER pair ─────────────────────────────
 
 def _gray16(bgr: np.ndarray) -> np.ndarray:
     """Grey levels as int16, so a difference cannot wrap around like uint8 would."""
@@ -288,11 +276,11 @@ def judge_changes(raw: VideoRaw, theta: float, min_rest_s: float) -> Judged:
         return raw.judged[key]
     if not vlm.is_available():
         raise RuntimeError(
-            f"Cloud-Modell '{vlm.MODEL}' nicht nutzbar. Benötigt:\n"
-            "  uv sync                (Paket 'anthropic')\n"
-            "  ANTHROPIC_API_KEY=...  oder  ant auth login\n\n"
-            "Ohne VLM kann die Video-Modalität keine Handlungsgrenzen bestimmen — "
-            "ein rein struktureller Score misst Pixelmenge, nicht Bedeutung."
+            f"Cloud model '{vlm.MODEL}' not usable. Requires:\n"
+            "  uv sync                (package 'anthropic')\n"
+            "  ANTHROPIC_API_KEY=...  or  ant auth login\n\n"
+            "Without a VLM the video modality cannot determine action boundaries — "
+            "a purely structural score measures amounts of pixels, not meaning."
         )
 
     frames = _read_frames(str(raw.recording_path),
@@ -312,8 +300,8 @@ def judge_changes(raw: VideoRaw, theta: float, min_rest_s: float) -> Judged:
             # the missing tail is visible, not mistaken for "no more boundaries".
             limit_hit = True
             warnings.warn(
-                f"Video: _MAX_CALLS={_MAX_CALLS} erreicht in {raw.session_dir.name} "
-                f"(θ={theta:g}, d={min_rest_s:g} s) — restliche Änderungen ungeprüft.",
+                f"Video: _MAX_CALLS={_MAX_CALLS} reached in {raw.session_dir.name} "
+                f"(θ={theta:g}, d={min_rest_s:g} s) — remaining changes unchecked.",
                 stacklevel=2,
             )
             break
@@ -335,8 +323,6 @@ def judge_changes(raw: VideoRaw, theta: float, min_rest_s: float) -> Judged:
         raw.judged[key] = result
     return result
 
-
-# ── Output: the evidence curve ────────────────────────────────────────────────
 
 def evidence_from_verdicts(
     verdicts: Sequence[ChangeVerdict],
@@ -383,8 +369,6 @@ def render(
     )
 
 
-# ── Decoding (OpenCV and ffprobe) ─────────────────────────────────────────────
-
 def parse_frame_times(csv_text: str, n_frames: int) -> np.ndarray:
     """
     Frame presentation times from ffprobe's CSV output, zeroed on the first frame.
@@ -396,8 +380,8 @@ def parse_frame_times(csv_text: str, n_frames: int) -> np.ndarray:
     times = [float(line.split(",")[0]) for line in csv_text.splitlines() if line.strip()]
     if len(times) != n_frames:
         raise RuntimeError(
-            f"ffprobe lieferte {len(times)} Frame-Zeiten, dekodiert wurden "
-            f"{n_frames} — inkonsistente Aufnahme."
+            f"ffprobe returned {len(times)} frame times, but {n_frames} were "
+            f"decoded — inconsistent recording."
         )
     t = np.asarray(times, dtype=np.float64)
     return t - t[0] if len(t) else t
@@ -467,7 +451,6 @@ def _read_frames(video_path: str, wanted: set[int]) -> dict[int, np.ndarray]:
     return frames
 
 
-# What a stored scan depends on besides the recording, which is never edited.
 _SSIM_KEY = f"{_SSIM_FORMAT}|{_ACTIVITY_GRID}|{_SSIM_SIGMA}|{PANEL_WIDTH}"
 
 
@@ -498,8 +481,6 @@ def scan_similarity(session: RecordingSession, use_cache: bool = True) -> tuple[
         store.write_npz(path, key=np.array(_SSIM_KEY), times_s=times_s, sim=sim)
     return times_s, sim
 
-
-# ── Stage 1: raw ──────────────────────────────────────────────────────────────
 
 def raw_key(settings: Settings) -> str:
     """Everything a raw result and its verdicts depend on besides the recording

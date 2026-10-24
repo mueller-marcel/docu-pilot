@@ -1,16 +1,16 @@
 """
-The finished evaluation of one corpus: the figures of the thesis (chapter 4)
-and the numbers behind them.
+The finished evaluation of one corpus: the report's figures and the numbers
+behind them.
 
-    TF1   Abb. 4.2  F1 of every single modality and of none — bars, 95 % interval
-    TF2   Abb. 4.3  F1 of all eight modality combinations — bars, 95 % interval
-          Abb. 4.4  Shapley value of every modality — bars, 95 % interval
-    TF3   Abb. 4.5  saturation curve, mean F1 per number of modalities, with the
-                    gain written between the points
-          Abb. 4.6  gain Δ(k) of the k-th modality — bars, 95 % interval, ±SESOI band
+    singles     F1 of every single modality and of none — bars, 95 % interval
+    subsets     F1 of all eight modality combinations — bars, 95 % interval
+    shapley     Shapley value of every modality — bars, 95 % interval
+    saturation  saturation curve, mean F1 per number of modalities, with the
+                gain written between the points
+    steps       gain Δ(k) of the k-th modality — bars, 95 % interval, ±SESOI band
 
 Everything is computed here, without Qt, so the same numbers can be produced by
-a script — the figures for the thesis must be reproducible without a window.
+a script — the figures must be reproducible without a window.
 """
 
 from __future__ import annotations
@@ -25,16 +25,13 @@ from docupilot.evaluation.experiment import ExperimentResult, SessionData
 from docupilot.evaluation.statistics import Estimate, SaturationPoint
 from docupilot.segmentation import MODALITIES
 
-# The modalities as the thesis names them, and their letters in Abb. 4.3.
-NAMES = {"audio": "Sprache", "events": "Ereignisse", "video": "Video"}
+NAMES = {"audio": "Speech", "events": "Events", "video": "Video"}
 LETTERS = {"events": "E", "audio": "S", "video": "V"}
-BASELINE_NAME = "keine Modalität (v(∅))"
+BASELINE_NAME = "no modality (v(∅))"
 
-# Colours of the thesis figures: modalities blue, the uninformed baseline grey.
 BAR = "#7c7cf2"
 BASELINE = "#9ca3af"
 
-# A bar of a chart: (label, value, ci_low, ci_high, hex colour).
 Bar = tuple[str, float, float, float, str]
 
 _EMPTY = frozenset()
@@ -49,7 +46,7 @@ class Report:
     n_sessions: int
     rows: list[dict] = field(default_factory=list)
     subsets: dict[frozenset[str], Estimate] = field(default_factory=dict)
-    """F1 of every modality combination, the empty one included (TF1, TF2)."""
+    """F1 of every modality combination, the empty one included."""
     shapley: dict[str, Estimate] = field(default_factory=dict)
     curve: dict[int, float] = field(default_factory=dict)
     steps: dict[int, Estimate] = field(default_factory=dict)
@@ -68,8 +65,6 @@ class Report:
     def sesoi(self) -> float:
         return self.settings.sesoi_value
 
-
-# ── Computation ──────────────────────────────────────────────────────────────
 
 def count_ratio(rows: Sequence[dict], subset: frozenset[str]) -> float:
     """Predicted / annotated boundaries of one coalition, pooled over sessions
@@ -119,10 +114,8 @@ def analyse(
     )
 
 
-# ── Bars for the charts ──────────────────────────────────────────────────────
-
 def single_bars(report: Report) -> list[Bar]:
-    """TF1 (Abb. 4.2): the single modalities, best first, then no modality."""
+    """The single modalities, best first, then no modality."""
     bars = []
     for subset, e in sorted(report.subsets.items(), key=lambda kv: -kv[1].est):
         if len(subset) == 1:
@@ -133,12 +126,12 @@ def single_bars(report: Report) -> list[Bar]:
 
 
 def combination_label(subset: frozenset[str]) -> str:
-    """A combination in the letters of Abb. 4.3, e.g. "E+S+V"; "( )" for none."""
+    """A combination in the modalities' letters, e.g. "E+S+V"; "( )" for none."""
     return "+".join(sorted(LETTERS.get(m, m) for m in subset)) or "( )"
 
 
 def subset_bars(report: Report) -> list[Bar]:
-    """TF2 (Abb. 4.3): all eight combinations, best first, the empty one last."""
+    """All eight combinations, best first, the empty one last."""
     ranked = sorted((s for s in report.subsets if s), key=lambda s: -report.subsets[s].est)
     return [
         (combination_label(s), e.est, e.lo, e.hi, BASELINE if not s else BAR)
@@ -147,20 +140,18 @@ def subset_bars(report: Report) -> list[Bar]:
 
 
 def shapley_bars(report: Report) -> list[Bar]:
-    """TF2 (Abb. 4.4): Shapley value of every modality, strongest first."""
+    """Shapley value of every modality, strongest first."""
     return [(NAMES.get(m, m), e.est, e.lo, e.hi, BAR)
             for m, e in sorted(report.shapley.items(), key=lambda kv: -kv[1].est)]
 
 
 def step_bars(report: Report) -> list[Bar]:
-    """TF3 (Abb. 4.6): the gain Δ(k) of the k-th modality, in order of k."""
-    return [(f"{k}. Modalität", e.est, e.lo, e.hi, BAR) for k, e in sorted(report.steps.items())]
+    """The gain Δ(k) of the k-th modality, in order of k."""
+    return [(f"Modality {k}", e.est, e.lo, e.hi, BAR) for k, e in sorted(report.steps.items())]
 
-
-# ── Texts ────────────────────────────────────────────────────────────────────
 
 def _num(value: float, signed: bool = False) -> str:
-    """A number as the thesis writes it: three decimals, decimal comma."""
+    """A number with three decimals and a decimal comma."""
     return f"{value:{'+' if signed else ''}.3f}".replace(".", ",")
 
 
@@ -170,9 +161,9 @@ def _ci(e: Estimate, signed: bool = False) -> str:
 
 def _saturation_sentence(point: SaturationPoint, n_players: int) -> str:
     if point.k_star >= n_players:
-        return f"k* = {point.k_star}: keine Sättigung im gemessenen Bereich"
-    return (f"k* = {point.k_star}: jeder weitere Zugewinn im Mittel unter SESOI "
-            "oder nicht statistisch gesichert")
+        return f"k* = {point.k_star}: no saturation within the measured range"
+    return (f"k* = {point.k_star}: every further gain below SESOI on average "
+            "or not statistically significant")
 
 
 def singles_text(report: Report) -> str:
@@ -192,19 +183,19 @@ def shapley_text(report: Report) -> str:
 
 def curve_text(report: Report) -> str:
     return "   " + "   ·   ".join(
-        f"{k} Modalität{'' if k == 1 else 'en'}: {_num(v)}" for k, v in sorted(report.curve.items())
+        f"{k} modalit{'y' if k == 1 else 'ies'}: {_num(v)}" for k, v in sorted(report.curve.items())
     )
 
 
 def steps_text(report: Report) -> str:
-    """TF3: the steps with interval and class against ±SESOI, and k*."""
-    lines = [f"   {k}. Modalität:  {_ci(e, True)}  {e.cls(report.sesoi)}"
+    """The steps with interval and class against ±SESOI, and k*."""
+    lines = [f"   Modality {k}:  {_ci(e, True)}  {e.cls(report.sesoi)}"
              for k, e in sorted(report.steps.items())]
     lines.append("   → " + _saturation_sentence(report.saturation, len(report.players)))
     lines.append(
-        f"   SESOI = {_num(report.sesoi)} (eine Grenze). Klassen: R = relevant (KI außerhalb "
-        "±SESOI), S = statistisch gesichert, teils unter SESOI, SÄ = gesichert, aber ganz unter "
-        "SESOI, Ä = vernachlässigbar, U = unklar."
+        f"   SESOI = {_num(report.sesoi)} (one boundary). Classes: R = relevant (CI outside "
+        "±SESOI), S = statistically significant, partly below SESOI, SE = significant, but fully "
+        "below SESOI, E = negligible, U = undecided."
     )
     return "\n".join(lines)
 
@@ -212,10 +203,10 @@ def steps_text(report: Report) -> str:
 def status_line(report: Report) -> str:
     """The one-line summary the window shows when a run completes."""
     return (
-        f"Fertig · {report.n_sessions} Sessions · τ = {report.tau_s:g} s · "
-        f"F1 alle Modalitäten {_num(report.f1_all)} · Grenzen/annotiert "
+        f"Done · {report.n_sessions} sessions · τ = {report.tau_s:g} s · "
+        f"F1 all modalities {_num(report.f1_all)} · boundaries/annotated "
         f"{report.count_ratio:.2f}".replace(".", ",") + "×"
-        + (f"  ·  ⚠ Shapley-Effizienzfehler {report.efficiency_error:.1e}"
+        + (f"  ·  ⚠ Shapley efficiency error {report.efficiency_error:.1e}"
            if report.efficiency_error > 1e-9 else "")
     )
 
@@ -224,11 +215,11 @@ def header_lines(report: Report, corpus_root: Path | None, created: str) -> list
     """The metadata block at the top of the PDF report."""
     s = report.settings
     return [
-        f"Korpus: {corpus_root if corpus_root else '—'}",
-        f"Erstellt: {created}",
-        f"Sessions: {report.n_sessions}   ·   Entscheider: {s.decider}   ·   Leave-one-session-out",
-        f"τ = {s.tau_s:g} s   ·   SESOI = {_num(s.sesoi_value)}   ·   Intervalle 95 % "
-        "(t über die Sessions)",
+        f"Corpus: {corpus_root if corpus_root else '—'}",
+        f"Created: {created}",
+        f"Sessions: {report.n_sessions}   ·   Decider: {s.decider}   ·   Leave-one-session-out",
+        f"τ = {s.tau_s:g} s   ·   SESOI = {_num(s.sesoi_value)}   ·   Intervals 95 % "
+        "(t over the sessions)",
     ]
 
 
@@ -238,34 +229,34 @@ class Section:
 
     title: str
     hint: str
-    chart: str | None = None      # a field of report_view.ReportCharts
+    chart: str | None = None
     text: str | None = None
 
 
 def sections(report: Report) -> list[Section]:
     """
-    The figures in the order of the thesis — shared by the window and the PDF
+    The figures in their fixed order — shared by the window and the PDF
     so both show the same headings.
     """
     return [
-        Section("Teilfrage 1 · Segmentierungsqualität der Einzelmodalitäten mit "
-                "Konfidenzintervall",
-                "Balken = mittlerer F1-Wert über die Sessions, Whisker = 95-%-Konfidenzintervall; "
-                "grau = keine Modalität.",
+        Section("Sub-question 1 · Segmentation quality of the single modalities with "
+                "confidence interval",
+                "Bars = mean F1 score over the sessions, whiskers = 95 % confidence interval; "
+                "grey = no modality.",
                 chart="singles", text=singles_text(report)),
-        Section("Teilfrage 2 · F1-Werte je Modalitätskombination",
-                "Balken = mittlerer F1-Wert, Whisker = 95-%-Konfidenzintervall; "
-                "E = Ereignisse, S = Sprache, V = Video, ( ) = keine Modalität.",
+        Section("Sub-question 2 · F1 scores per modality combination",
+                "Bars = mean F1 score, whiskers = 95 % confidence interval; "
+                "E = events, S = speech, V = video, ( ) = no modality.",
                 chart="subsets", text=subsets_text(report)),
-        Section("Teilfrage 2 · Shapley-Werte mit Konfidenzintervall",
-                "Balken = marginaler Beitrag (Zugewinn im F1-Wert), Whisker = "
-                "95-%-Konfidenzintervall.",
+        Section("Sub-question 2 · Shapley values with confidence interval",
+                "Bars = marginal contribution (gain in F1 score), whiskers = "
+                "95 % confidence interval.",
                 chart="shapley", text=shapley_text(report)),
-        Section("Teilfrage 3 · Sättigungskurve: mittlerer F1-Wert je Anzahl Modalitäten",
-                "Punkte = mittlerer F1-Wert aller Kombinationen mit k Modalitäten; "
-                "zwischen den Punkten der Zuwachs.",
+        Section("Sub-question 3 · Saturation curve: mean F1 score per number of modalities",
+                "Points = mean F1 score of all combinations with k modalities; "
+                "the increase between the points.",
                 chart="saturation", text=curve_text(report)),
-        Section("Teilfrage 3 · Zugewinn je hinzugenommener Modalität mit Konfidenzintervall",
-                "Balken = Zugewinn Δ(k), Whisker = 95-%-Konfidenzintervall, graues Band = ±SESOI.",
+        Section("Sub-question 3 · Gain per added modality with confidence interval",
+                "Bars = gain Δ(k), whiskers = 95 % confidence interval, grey band = ±SESOI.",
                 chart="steps", text=steps_text(report)),
     ]

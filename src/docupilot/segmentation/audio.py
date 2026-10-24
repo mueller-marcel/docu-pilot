@@ -1,7 +1,7 @@
 """
 Action boundaries from the audio track alone: each narrated sentence is judged by
 an LLM, and each sentence draws a bell, as high as its boundary probability,
-over the sentence's own interval (MA 3.2.2).
+over the sentence's own interval.
 
 Audio knows the INTERVAL a boundary falls in, never the instant. Per sentence
 the bell spans [s_j, e_j] — as wide as the sentence — and peaks at
@@ -14,7 +14,7 @@ probability as height, and "announced" with height 1 for every sentence — the
 participants were asked to announce each step, so that a sentence begins is
 itself evidence, whatever the LLM makes of its wording.
 
-Two stages (C8):
+Two stages:
 
     extract_raw(session)   Whisper sentences (start, end, text) + one LLM
                            verdict each — expensive, cached, fold-independent
@@ -48,7 +48,6 @@ _WHISPER_MODEL = "small"
 
 _SPACY_MODELS = ("de_core_news_lg", "de_core_news_md", "de_core_news_sm")
 
-# What the LLM said about the narration, kept beside the recording.
 VERDICT_CACHE_FILE = "audio_llm_cache.json"
 
 # Loaded models, one set PER THREAD. Whisper and spaCy take a minute to load
@@ -81,8 +80,6 @@ class AudioRaw:
     model: str = ""
     retrieved_at: str = ""
 
-
-# ── Models ────────────────────────────────────────────────────────────────────
 
 def _keep_attention_weights() -> None:
     """
@@ -133,7 +130,7 @@ def _nlp():
             continue
     if nlp is None:
         raise OSError(
-            "Kein deutsches spaCy-Modell gefunden. Bitte installieren:\n"
+            "No German spaCy model found. Please install one:\n"
             "  python -m spacy download de_core_news_lg"
         )
     _MODELS.nlp = nlp
@@ -166,7 +163,7 @@ def _transcribe_whisper(session: RecordingSession) -> tuple[str, list[dict]]:
 def _transcribe_whisperx(session: RecordingSession) -> tuple[str, list[dict]]:
     """
     WhisperX transcript: voice activity detection, then word times from a forced
-    alignment with a German wav2vec2 model (C10) instead of cross-attention.
+    alignment with a German wav2vec2 model instead of cross-attention.
 
     :raises RuntimeError: when whisperx is not installed — it is optional.
     """
@@ -174,7 +171,7 @@ def _transcribe_whisperx(session: RecordingSession) -> tuple[str, list[dict]]:
         import whisperx
     except ImportError:
         raise RuntimeError(
-            "ASR_ALIGNMENT = 'whisperx' braucht das optionale Paket 'whisperx':\n"
+            "ASR_ALIGNMENT = 'whisperx' needs the optional package 'whisperx':\n"
             "  pip install whisperx"
         ) from None
 
@@ -205,10 +202,9 @@ def sentences_from_words(full_text: str, words: list[dict]) -> list[tuple[float,
     if not full_text or not words:
         return []
 
-    # Char offset -> word, from the word list. The cursor advances past each
-    # match so a repeated word maps to its own occurrence rather than always
-    # the first one; as a consequence the offsets are strictly ascending, which
-    # is what lets a sentence boundary be looked up by bisection.
+    # The cursor advances past each match so a repeated word maps to its own
+    # occurrence rather than always the first one; the offsets are then strictly
+    # ascending, which is what lets a sentence boundary be looked up by bisection.
     positions: list[int] = []
     starts: list[float] = []
     ends: list[float] = []
@@ -253,8 +249,6 @@ def _duration_s(session: RecordingSession) -> float:
     return len(whisper.load_audio(str(session.recording_path))) / whisper.audio.SAMPLE_RATE
 
 
-# ── Geometry ──────────────────────────────────────────────────────────────────
-
 def bell_geometry(sentence: Sentence, peak_offset_s: float) -> tuple[float, float, float]:
     """
     (L, c, R) of a sentence's bell: L = s, c = s + offset, R = e — or one grid
@@ -264,8 +258,6 @@ def bell_geometry(sentence: Sentence, peak_offset_s: float) -> tuple[float, floa
     peak = left + peak_offset_s
     return left, peak, max(sentence.end_s, peak + 1.0 / GRID_HZ)
 
-
-# ── Stage 1: raw ──────────────────────────────────────────────────────────────
 
 def raw_key(settings: Settings) -> str:
     """Everything a raw result depends on besides the recording."""
@@ -338,12 +330,12 @@ def extract_raw(
     # Before Whisper and spaCy load their models: they cost a minute together.
     if not judge.is_available():
         raise RuntimeError(
-            f"LLM-Backend '{judge.MODEL}' nicht nutzbar. Benötigt:\n"
-            "  uv sync                (Paket 'anthropic')\n"
-            "  ANTHROPIC_API_KEY=...  oder  ant auth login\n\n"
-            "Ohne semantisches Urteil kann die Audio-Modalität keine "
-            "Handlungsgrenzen bestimmen — jede Ansage wäre gleich viel wert und "
-            "die Spur würde die ganze Zeitachse gleichmäßig füllen."
+            f"LLM backend '{judge.MODEL}' not usable. Requires:\n"
+            "  uv sync                (package 'anthropic')\n"
+            "  ANTHROPIC_API_KEY=...  or  ant auth login\n\n"
+            "Without a semantic judgement the audio modality cannot determine "
+            "action boundaries — every utterance would be worth the same and "
+            "the lane would fill the whole timeline evenly."
         )
 
     if on_progress is not None:
@@ -389,8 +381,6 @@ def extract_raw(
         store.save_raw(session, MODALITY, key, _to_payload(raw))
     return raw
 
-
-# ── Stage 2: render ───────────────────────────────────────────────────────────
 
 def render(
     raw: AudioRaw, settings: Settings, params: FoldParams | None = None

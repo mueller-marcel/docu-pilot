@@ -1,59 +1,59 @@
-# Aufnahme
+# Recording
 
-Modul: {py:mod}`docupilot.recording`.
+Module: {py:mod}`docupilot.recording`.
 
-## Bausteine
+## Building blocks
 
 `RecorderService`
-: Startet und stoppt eine Aufnahme. Legt eine {py:class}`~docupilot.recording.session.RecordingSession`
-  an, öffnet den {py:class}`~docupilot.recording.session.EventWriter` und
-  startet beide Rekorder. Schreibt die Lebenszyklus-Ereignisse
-  `recording_started`, `recording_stopping` und `recording_stopped`.
+: Starts and stops a recording. Creates a {py:class}`~docupilot.recording.session.RecordingSession`,
+  opens the {py:class}`~docupilot.recording.session.EventWriter` and
+  starts both recorders. Writes the life-cycle events
+  `recording_started`, `recording_stopping` and `recording_stopped`.
 
 `AvRecorder`
-: Ein einziger `ffmpeg`-Prozess nimmt Bildschirm und Mikrofon in
-  `recording.mp4` auf. Der Bildschirm wird mit `mss` 10-mal pro Sekunde
-  abgegriffen und als Rohbild an `ffmpeg` übergeben; das Mikrofon liest `ffmpeg`
-  selbst (`dshow` unter Windows, `avfoundation` unter macOS).
+: A single `ffmpeg` process records screen and microphone into
+  `recording.mp4`. The screen is grabbed with `mss` 10 times per second
+  and passed to `ffmpeg` as a raw frame; `ffmpeg` reads the microphone
+  itself (`dshow` on Windows, `avfoundation` on macOS).
 
 `InputRecorder`
-: Protokolliert über `pynput` Mausklicks (`mouse_click`, gedrückt und
-  losgelassen), Scrollen (`mouse_scroll`) sowie Tastendrücke und -freigaben
+: Logs via `pynput` mouse clicks (`mouse_click`, pressed and
+  released), scrolling (`mouse_scroll`) as well as key presses and releases
   (`key_press`, `key_release`).
 
 `RecordingSession`
-: Eine Aufnahme: Dateipfade, Metadaten, die gemeinsame Uhr und die
-  Referenzannotation. Sie ist die einzige Stelle, die `ground_truth.json` liest
-  und schreibt.
+: One recording: file paths, metadata, the shared clock and the
+  reference annotation. It is the only place that reads and writes
+  `ground_truth.json`.
 
 `EventWriter`
-: Hängt Ereignisse threadsicher an ein JSON-Array an, eines pro Zeile.
+: Appends events thread-safely to a JSON array, one per line.
 
-## Eine Uhr für alle Datenströme
+## One clock for all data streams
 
-Alle Zeitstempel in `events.json` stehen auf der Uhr des Videos. Der
-`AvRecorder` setzt den Ursprung der Session (`RecordingSession.arm`) in dem
-Moment, in dem `ffmpeg` das erste Bild angenommen hat – genau dieses Bild ist
-Zeit 0 im MP4. Jedes spätere Ereignis erhält `t_ms` relativ zu diesem Ursprung
-(`session_time_ms`). Damit liegen Video, Ton und Eingaben ohne nachträgliche
-Synchronisation auf einer Zeitachse; die Bildzeiten liest die Video-Modalität
-später mit `ffprobe` direkt aus dem Container.
+All timestamps in `events.json` are on the video clock. The
+`AvRecorder` sets the session origin (`RecordingSession.arm`) at the
+moment `ffmpeg` has accepted the first frame – exactly this frame is
+time 0 in the MP4. Every later event receives `t_ms` relative to this origin
+(`session_time_ms`). Video, audio and input thus lie on one time axis without
+subsequent synchronisation; the video modality later reads the frame times
+directly from the container with `ffprobe`.
 
 ```{important}
-Der Mauszeiger wird **nicht** in die Bilder gezeichnet. Er würde den
-Ereignisstrom in die Video-Modalität tragen; deren Unabhängigkeit ist
-Voraussetzung für die Shapley-Zerlegung. Das Bildmodell bekommt deshalb nie
-einen Zeiger zu sehen.
+The mouse pointer is **not** drawn into the frames. It would carry the
+event stream into the video modality, whose independence is a
+prerequisite for the Shapley decomposition. The vision model therefore never
+gets to see a pointer.
 ```
 
-## Session-Verzeichnis
+## Session directory
 
-Jede Aufnahme liegt in einem eigenen Verzeichnis. Die Eingaben
-(`recording.mp4`, `events.json`, `ground_truth.json`) werden nie automatisch
-verändert; alles andere in diesem Verzeichnis ist abgeleitet und kann gelöscht
-werden. Aufbau und Formate: {doc}`../reference/data-formats`.
+Each recording lives in its own directory. The inputs
+(`recording.mp4`, `events.json`, `ground_truth.json`) are never modified
+automatically; everything else in this directory is derived and can be
+deleted. Structure and formats: {doc}`../reference/data-formats`.
 
-Eine gespeicherte Session wird mit
-{py:meth}`RecordingSession.from_directory <docupilot.recording.session.RecordingSession.from_directory>`
-geöffnet; Bildschirm und Mikrofon sind dann Platzhalter, weil keine Hardware
-dahintersteht.
+A saved session is opened with
+{py:meth}`RecordingSession.from_directory <docupilot.recording.session.RecordingSession.from_directory>`;
+screen and microphone are then placeholders, because there is no hardware
+behind them.

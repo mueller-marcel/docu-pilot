@@ -1,17 +1,17 @@
-# Einstieg
+# Getting started
 
-## Voraussetzungen
+## Prerequisites
 
-| Komponente | Zweck |
+| Component | Purpose |
 |---|---|
-| Python 3.13 oder 3.14 | Laufzeit (`requires-python = ">=3.13,<3.15"`); `.python-version` legt lokal 3.14 fest, wie in der CI |
-| [uv](https://docs.astral.sh/uv/) | Abhängigkeiten, virtuelle Umgebung und bei Bedarf Python selbst |
-| `ffmpeg` und `ffprobe` im `PATH` | Aufnahme von Bildschirm und Mikrofon, Bildzeiten und Dauer der Aufnahmen |
-| Zugang zur Anthropic-API | Urteile des Sprach- und des Bildmodells in der Segmentierung |
+| Python 3.13 or 3.14 | Runtime (`requires-python = ">=3.13,<3.15"`); `.python-version` pins 3.14 locally, as in CI |
+| [uv](https://docs.astral.sh/uv/) | Dependencies, virtual environment and, if needed, Python itself |
+| `ffmpeg` and `ffprobe` on the `PATH` | Recording of screen and microphone, frame times and duration of the recordings |
+| Access to the Anthropic API | Judgements of the language and the vision model in the segmentation |
 
-Die Aufnahme selbst braucht keinen API-Zugang. Er wird erst benötigt, wenn eine
-Aufnahme segmentiert oder ein Korpus ausgewertet wird und die Urteile noch nicht
-im Cache der Session liegen.
+The recording itself needs no API access. It is only required when a
+recording is segmented or a corpus is evaluated and the judgements are not yet
+in the session's cache.
 
 ## Installation
 
@@ -19,96 +19,96 @@ im Cache der Session liegen.
 uv sync
 ```
 
-`uv sync` installiert die Laufzeitabhängigkeiten und die Gruppe `dev`
-(Tests, Linting) aus `uv.lock`. Für diese Dokumentation zusätzlich:
+`uv sync` installs the runtime dependencies and the `dev` group
+(tests, linting) from `uv.lock`. For this documentation, additionally:
 
 ```bash
 uv sync --group docs
 ```
 
-Das deutsche spaCy-Modell `de_core_news_lg` wird als Abhängigkeit mitinstalliert;
-Whisper lädt sein Modell (`small`) beim ersten Transkribieren herunter.
+The German spaCy model `de_core_news_lg` is installed as a dependency;
+Whisper downloads its model (`small`) on the first transcription.
 
-### Zugang zum Modell
+### Access to the model
 
-DocuPilot liest Zugangsdaten so, wie das Anthropic-SDK sie auflöst: aus
-`ANTHROPIC_API_KEY` oder einem mit `ant auth login` angelegten Profil. Eine
-Datei `.env` im Projektverzeichnis wird beim Start eingelesen, ohne bereits
-gesetzte Variablen zu überschreiben:
+DocuPilot reads credentials the way the Anthropic SDK resolves them: from
+`ANTHROPIC_API_KEY` or a profile created with `ant auth login`. A
+`.env` file in the project directory is read at start-up without overwriting
+variables that are already set:
 
 ```ini
 ANTHROPIC_API_KEY=...
-# optional: anderes Modell für beide Urteilsstufen
+# optional: a different model for both judgement stages
 DOCUPILOT_MODEL=claude-sonnet-5
 ```
 
-Beide Urteilsstufen – Sprache und Video – verwenden bewusst **dasselbe** Modell,
-damit der Modalitätsvergleich nicht die Fähigkeiten zweier Modelle vergleicht
-(siehe {doc}`concepts/reproducibility`).
+Both judgement stages – speech and video – deliberately use the **same** model,
+so that the modality comparison does not compare the capabilities of two models
+(see {doc}`concepts/reproducibility`).
 
-## Starten
+## Starting
 
 ```bash
 uv run docupilot
 ```
 
-oder `python -m docupilot`. Es öffnet sich das Hauptfenster.
+or `python -m docupilot`. The main window opens.
 
-## Arbeitsablauf
+## Workflow
 
-### 1. Aufnehmen
+### 1. Recording
 
-Im Hauptfenster Bildschirm und Mikrofon wählen und die Aufnahme starten.
-DocuPilot schreibt in ein Session-Verzeichnis:
+In the main window, select the screen and microphone and start the recording.
+DocuPilot writes to a session directory:
 
-- `recording.mp4` – Bildschirm (10 fps) und Mikrofon,
-- `events.json` – jede Maus- und Tastatureingabe mit Zeitstempel auf der Uhr
-  des Videos.
+- `recording.mp4` – screen (10 fps) and microphone,
+- `events.json` – every mouse and keyboard input with a timestamp on the
+  video's clock.
 
 Details: {doc}`architecture/recording`.
 
-### 2. Annotieren
+### 2. Annotating
 
-Nach dem Stoppen – oder über **Datei → Öffnen…** für eine gespeicherte
-Session – zeigt das Annotationsfenster das Video. **Grenze setzen (Beginn)**
-und **Ende setzen** markieren die aktuelle Position als Grenze. Die Grenzen
-landen in `ground_truth.json`, getrennt nach Grenzdefinition (`begin`, `end`)
-und Annotationslauf (1, 2, …). Welche Grenze wo zu setzen ist, legt der
-Annotationsleitfaden fest ({doc}`concepts/boundaries`).
+After stopping – or via **File → Open…** for a saved
+session – the annotation window shows the video. **Set boundary (begin)**
+and **Set end** mark the current position as a boundary. The boundaries
+are stored in `ground_truth.json`, separated by boundary definition (`begin`, `end`)
+and annotation run (1, 2, …). Which boundary is to be set where is defined by the
+annotation guideline ({doc}`concepts/boundaries`).
 
-**Features** öffnet den Merkmalsdialog: eine Zeitleiste mit der Evidenzkurve
-jeder Modalität neben den annotierten Grenzen.
+**Features** opens the feature dialog: a timeline with the evidence curve
+of each modality next to the annotated boundaries.
 
-### 3. Auswerten
+### 3. Evaluating
 
-**Auswertung → Korpus auswählen…** wählt ein Verzeichnis mit
-Session-Verzeichnissen; **Auswertung → Auswertungsfenster öffnen…** zeigt es.
-Die Tabelle nennt je Session, wie viele Grenzen annotiert sind und ob
-Modellurteile schon im Cache liegen. Ein Lauf
+**Evaluation → Choose corpus…** selects a directory containing
+session directories; **Evaluation → Open evaluation window…** shows it.
+The table lists, per session, how many boundaries are annotated and whether
+model judgements are already in the cache. A run
 
-1. extrahiert jede Modalität einmal je Session,
-2. berechnet alle acht Modalitätskombinationen leave-one-session-out,
-3. zeigt den Bericht mit den Abbildungen zu den drei Teilfragen.
+1. extracts each modality once per session,
+2. computes all eight modality combinations leave-one-session-out,
+3. shows the report with the figures for the three sub-questions.
 
-Bericht und Ergebnistabelle lassen sich als PDF bzw. CSV exportieren. Ablauf
-und Rechenweg: {doc}`architecture/evaluation`.
+The report and the results table can be exported as PDF and CSV respectively. Procedure
+and computation: {doc}`architecture/evaluation`.
 
 ```{note}
-Ein Lauf ruft die Modelle nur für Urteile auf, die noch nicht im Cache der
-jeweiligen Session liegen. Ein zweiter Lauf über denselben Korpus kostet keine
-Modellaufrufe, solange Modell und Prompt-Version gleich bleiben. Über das Menü
-des Auswertungsfensters lassen sich die Caches gezielt löschen
+A run calls the models only for judgements that are not yet in the cache of the
+respective session. A second run over the same corpus costs no
+model calls as long as the model and prompt version stay the same. The caches can be
+deleted selectively via the menu of the evaluation window
 ({doc}`reference/data-formats`).
 ```
 
-## Kommandozeile
+## Command line
 
-Einige Prüfungen laufen ohne Oberfläche:
+Some checks run without the user interface:
 
 ```bash
-# Wie stark weichen Whisper- und WhisperX-Satzanfänge voneinander ab?
-uv run python -m docupilot.evaluation.alignment <korpus>
+# How far do Whisper and WhisperX sentence starts deviate from each other?
+uv run python -m docupilot.evaluation.alignment <corpus>
 
-# Wie stabil sind die Modellurteile ohne Cache? (verursacht Modellaufrufe)
-uv run python -m docupilot.evaluation.repeatability <korpus>
+# How stable are the model judgements without the cache? (incurs model calls)
+uv run python -m docupilot.evaluation.repeatability <corpus>
 ```

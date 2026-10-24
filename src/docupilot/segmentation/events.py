@@ -2,15 +2,15 @@
 Action boundaries from events.json alone. Opens exactly one file, so the
 modality stays independent for the ablation.
 
-Two stages, so that calibrating a parameter never re-reads anything (C8):
+Two stages, so that calibrating a parameter never re-reads anything:
 
     extract_raw(session)   the input bursts, each with its class histogram and
                            whether it was completed — fold-independent
     render(raw, ...)       three sub-curves drawn at the burst starts — cheap
 
-The sub-curves (C14), all placed at the FIRST event of a burst because the
+The sub-curves, all placed at the FIRST event of a burst because the
 annotation marks the beginning of the next step. The primary run uses the
-rest alone (MA 3.2.5); the other two are the "all" sensitivity variant:
+rest alone; the other two are the "all" sensitivity variant:
 
     rest          how long the user was idle before the burst, relative to
                   the session's longest pause
@@ -53,7 +53,6 @@ MODALITY = "events"
 
 CHANNELS: tuple[str, ...] = ("rest", "completion", "class_change")
 
-# Action type × key class. Releases and modifier keys are no action of their own.
 EVENT_CLASSES: tuple[str, ...] = (
     "key:character", "key:navigation", "key:completion", "key:abort", "key:shortcut",
     "mouse:click", "mouse:double_click", "mouse:right_click", "mouse:scroll",
@@ -94,8 +93,6 @@ class EventsRaw:
     log_end_s: float
     unknown_keys: dict[str, int] = field(default_factory=dict)
 
-
-# ── Classification ────────────────────────────────────────────────────────────
 
 def _key_name(key: str, held: set[str]) -> tuple[str, bool]:
     """
@@ -208,8 +205,6 @@ def bursts_from_events(events: Sequence[dict[str, Any]], pause_s: float) -> tupl
     return bursts, unknown
 
 
-# ── Stage 1: raw ──────────────────────────────────────────────────────────────
-
 def raw_key(settings: Settings) -> str:
     """Everything a raw result depends on besides the recording."""
     return f"burst_pause={settings.burst_pause_s}|double_click={DOUBLE_CLICK_S}"
@@ -242,7 +237,7 @@ def extract_raw(
     cache, so `use_cache` and the callbacks — the shared extractor contract —
     are unused here.
 
-    :param settings: supplies the burst pause (a priori 2.0 s, C12 sensitivity).
+    :param settings: supplies the burst pause (a priori 2.0 s, varied in a sensitivity run).
     """
     settings = settings or Settings()
     log = session.read_events()
@@ -251,8 +246,6 @@ def extract_raw(
     return EventsRaw(bursts=bursts, log_start_s=log_start, log_end_s=log_end,
                      unknown_keys=unknown)
 
-
-# ── Stage 2: render ───────────────────────────────────────────────────────────
 
 def _cosine(a: dict[str, int], b: dict[str, int]) -> float | None:
     va = np.array([a.get(c, 0) for c in EVENT_CLASSES], dtype=np.float64)
@@ -274,7 +267,7 @@ def transitions(
     "end" (sensitivity only): at the last event of burst k, describing the step
     from k to k+1; the last burst's rest runs to the end of the log.
 
-    The rest height follows the duration of the pause (MA 3.2.5): the pause
+    The rest height follows the duration of the pause: the pause
     divided by the session's longest one, so it lies in (0, 1], grows with
     the pause and is normalised to the user's own pace without a parameter.
     """
@@ -308,7 +301,7 @@ def transitions(
 
 
 def channel_names(settings: Settings) -> tuple[str, ...]:
-    """The sub-curves a run uses: all three, or only the rest (C14 sensitivity)."""
+    """The sub-curves a run uses: all three, or only the rest (sensitivity variant)."""
     return CHANNELS if settings.event_channels == "all" else ("rest",)
 
 

@@ -1,26 +1,25 @@
-# Bewertung der Grenzen
+# Evaluation of the boundaries
 
-Modul: {py:mod}`docupilot.evaluation.metrics`.
+Module: {py:mod}`docupilot.evaluation.metrics`.
 
-## Zuordnung mit Toleranz
+## Matching with tolerance
 
-Eine vorhergesagte Grenze ist ein **Treffer**, wenn sie höchstens τ von einer
-Referenzgrenze entfernt liegt. Jede Referenzgrenze bekommt höchstens eine
-Vorhersage und umgekehrt (1:1). Die Zuordnung ist optimal (Kuhn–Munkres bzw.
-ungarische Methode): zuerst möglichst viele Treffer, bei gleicher Trefferzahl
-die kleinste Gesamtabweichung.
+A predicted boundary is a **hit** if it lies at most τ from a reference
+boundary. Each reference boundary receives at most one prediction and vice
+versa (1:1). The matching is optimal (Kuhn–Munkres, i.e. the Hungarian
+method): first as many hits as possible, then, for an equal number of hits,
+the smallest total deviation.
 
-| Situation | Ergebnis |
+| Situation | Result |
 |---|---|
-| Referenz 13,45 s, Vorhersage 12,96 s, τ = 1 s | Treffer (0,49 s) |
-| zusätzlich Vorhersage 13,80 s | ein Treffer (13,80 s, näher), 12,96 s ist falsch positiv |
-| Referenz 13,45 s, Vorhersage 11,90 s | kein Treffer (1,55 s): ein falsch Positives, ein falsch Negatives |
+| Reference 13.45 s, prediction 12.96 s, τ = 1 s | Hit (0.49 s) |
+| additional prediction 13.80 s | one hit (13.80 s, closer), 12.96 s is a false positive |
+| Reference 13.45 s, prediction 11.90 s | no hit (1.55 s): one false positive, one false negative |
 
-Eine gierige Zuordnung nach dem nächsten Nachbarn kann Treffer verschenken,
-wenn eine Vorhersage zwischen zwei Referenzgrenzen liegt; die optimale
-Zuordnung nicht.
+A greedy nearest-neighbour matching can give away hits when a prediction lies
+between two reference boundaries; the optimal matching cannot.
 
-## Kennzahlen
+## Metrics
 
 $$
 \text{Precision} = \frac{TP}{TP + FP}, \qquad
@@ -28,46 +27,44 @@ $$
 F_1 = \frac{2 \cdot P \cdot R}{P + R}
 $$
 
-Jede Kennzahl wird **je Session** berechnet und dann über die Sessions
-gemittelt – die Session ist die Einheit des Experiments.
+Each metric is computed **per session** and then averaged over the sessions –
+the session is the unit of the experiment.
 
-Zusätzlich berichtet DocuPilot das **Verhältnis gesetzter zu annotierten
-Grenzen** über alle Sessions: über 1 heißt Übersegmentierung, unter 1
-Untersegmentierung. F1 allein verdeckt, in welche Richtung ein Verfahren
-danebenliegt.
+In addition, DocuPilot reports the **ratio of predicted to annotated
+boundaries** across all sessions: above 1 means over-segmentation, below 1
+under-segmentation. F1 alone hides in which direction a method is off.
 
-## Toleranz τ
+## Tolerance τ
 
-τ = **1 s**, für alle Modalitäten gleich (`TOLERANCE_S`). Die Herleitung:
+τ = **1 s**, the same for all modalities (`TOLERANCE_S`). The derivation:
 
-- **Menschliche Präzision.** Die Ereignissegmentierung misst Übereinstimmung
-  üblicherweise in 1-s-Bins (Kurby & Zacks 2011; Sasmita & Swallow 2022); GEBD
-  mittelt die Konsistenz zwischen Annotatoren über 0,2–1,0 s (Shou et al.
-  2021). Erkennen, Entscheiden und Tastendruck beim Annotieren brauchen etwa
-  0,5–1 s. Eine kleinere Toleranz würde die Unschärfe der Referenz selbst als
-  Fehler zählen.
-- **Granularität.** Ein Fenster darf nie zwei Referenzgrenzen zugleich
-  überdecken; τ muss also unter dem halben kleinsten Grenzabstand des Korpus
-  liegen (bei 3,1 s also ≤ 1,5 s).
-- **An die Referenz gebunden, nicht an die Modalität.** Die Toleranz beschreibt
-  die Unschärfe der Annotation. Ein systematischer Versatz einer Modalität –
-  etwa die Ankündigung im Satz vor der Handlung – gehört in den Detektor (den
-  je Fold kalibrierten Vorlauf), nicht in die Toleranz. Getrennte Toleranzen je
-  Modalität würden die Messlatte verschieben und die Beiträge unvergleichbar
-  machen.
+- **Human precision.** Event segmentation research usually measures agreement
+  in 1 s bins (Kurby & Zacks 2011; Sasmita & Swallow 2022); GEBD averages the
+  consistency between annotators over 0.2–1.0 s (Shou et al. 2021). Detecting,
+  deciding and pressing the key while annotating take about 0.5–1 s. A smaller
+  tolerance would count the uncertainty of the reference itself as error.
+- **Granularity.** A window must never cover two reference boundaries at once;
+  τ must therefore lie below half the smallest boundary spacing in the corpus
+  (at 3.1 s, i.e. ≤ 1.5 s).
+- **Tied to the reference, not to the modality.** The tolerance describes the
+  uncertainty of the annotation. A systematic offset of a modality – such as
+  the announcement in the sentence before the action – belongs in the detector
+  (the lead calibrated per fold), not in the tolerance. Separate tolerances per
+  modality would shift the yardstick and make the contributions incomparable.
 
-τ lässt sich in der Einstellungsdatei ändern (`tau_primary_s`). An τ hängen das
-Kandidatenraster (τ/5), die Glockenbreite (σ = τ/3), die Merkmalsfenster und
-die Label-Toleranz.
+τ can be changed in the settings file (`tau_primary_s`). The candidate grid
+(τ/5), the bell width (σ = τ/3), the feature windows and the label tolerance
+all depend on τ.
 
-## Bezugswerte
+## Reference values
 
-**Baseline v(∅)** – Grenzen im festen Abstand der mittleren Segmentlänge der
-Trainingssessions, ganz ohne Modalität. Sie ist der Nullpunkt der Shapley-Werte.
+**Baseline v(∅)** – boundaries at a fixed spacing equal to the mean segment
+length of the training sessions, without any modality. It is the zero point of
+the Shapley values.
 
-**Zufallsniveau** – mittlerer F1 von so vielen gleichverteilten Grenzen, wie
-annotiert sind (1000 Ziehungen, fester Startwert;
-{py:func}`~docupilot.evaluation.metrics.chance_level`). Es steigt mit τ: Bei
-größerer Toleranz werden auch Zufallstreffer häufiger. Die Funktion steht für
-Prüfungen zur Verfügung; der Bericht zeigt stattdessen v(∅), die gegenüber
-gleichverteilten Grenzen zusätzlich die mittlere Segmentlänge kennt.
+**Chance level** – mean F1 of as many uniformly distributed boundaries as are
+annotated (1000 draws, fixed seed;
+{py:func}`~docupilot.evaluation.metrics.chance_level`). It rises with τ: with
+a larger tolerance, chance hits also become more frequent. The function is
+available for checks; the report instead shows v(∅), which, compared with
+uniformly distributed boundaries, additionally knows the mean segment length.

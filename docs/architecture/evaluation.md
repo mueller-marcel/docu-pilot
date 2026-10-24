@@ -1,131 +1,131 @@
-# Auswertung
+# Evaluation
 
-Modul: {py:mod}`docupilot.evaluation`.
+Module: {py:mod}`docupilot.evaluation`.
 
-Die Auswertung misst, wie gut jede der acht Kombinationen der drei Modalitäten
-die Referenzgrenzen trifft, und zerlegt das Ergebnis in die Beiträge der
-Modalitäten. Sie läuft vollständig ohne Oberfläche.
+The evaluation measures how well each of the eight combinations of the three modalities
+hits the reference boundaries, and decomposes the result into the contributions of the
+modalities. It runs entirely without a user interface.
 
-| Modul | Aufgabe |
+| Module | Purpose |
 |---|---|
-| {py:mod}`~docupilot.evaluation.corpus` | Was ein Korpusverzeichnis enthält, bevor gerechnet wird |
-| {py:mod}`~docupilot.evaluation.dataset` | Referenzgrenzen in Sekunden (mit Randregeln) und Dauer einer Aufnahme |
-| {py:mod}`~docupilot.evaluation.experiment` | Extraktion, Folds, Ergebnistabelle |
-| {py:mod}`~docupilot.evaluation.calibration` | Parameter, die je Fold aus den Trainingssessions bestimmt werden |
-| {py:mod}`~docupilot.evaluation.fusion` | Kandidaten, Merkmale, Entscheider, Schwelle, Non-Maximum-Suppression |
-| {py:mod}`~docupilot.evaluation.metrics` | Zuordnung der Grenzen, Precision/Recall/F1, Zufallsniveau |
-| {py:mod}`~docupilot.evaluation.analysis` | Shapley-Werte, Sättigungskurve |
-| {py:mod}`~docupilot.evaluation.statistics` | 95-%-Intervalle, SESOI, Klassen, Sättigungspunkt |
-| {py:mod}`~docupilot.evaluation.report` | die Abbildungen und ihre Zahlen |
-| {py:mod}`~docupilot.evaluation.artifacts` | abgeleitete Dateien finden und löschen |
+| {py:mod}`~docupilot.evaluation.corpus` | What a corpus directory contains, before anything is computed |
+| {py:mod}`~docupilot.evaluation.dataset` | Reference boundaries in seconds (with edge rules) and duration of a recording |
+| {py:mod}`~docupilot.evaluation.experiment` | Extraction, folds, results table |
+| {py:mod}`~docupilot.evaluation.calibration` | Parameters determined per fold from the training sessions |
+| {py:mod}`~docupilot.evaluation.fusion` | Candidates, features, decider, threshold, non-maximum suppression |
+| {py:mod}`~docupilot.evaluation.metrics` | Matching of boundaries, precision/recall/F1, chance level |
+| {py:mod}`~docupilot.evaluation.analysis` | Shapley values, saturation curve |
+| {py:mod}`~docupilot.evaluation.statistics` | 95 % intervals, SESOI, classes, saturation point |
+| {py:mod}`~docupilot.evaluation.report` | the figures and their numbers |
+| {py:mod}`~docupilot.evaluation.artifacts` | finding and deleting derived files |
 
-## Ablauf eines Laufs
+## Course of a run
 
-1. **Laden** – {py:func}`~docupilot.evaluation.experiment.load` extrahiert jede
-   Modalität einmal je Session und liest alle Annotationsläufe.
+1. **Load** – {py:func}`~docupilot.evaluation.experiment.load` extracts each
+   modality once per session and reads all annotation runs.
 2. **SESOI** – {py:func}`~docupilot.evaluation.experiment.measure_sesoi`
-   bestimmt die kleinste relevante Effektgröße aus der Referenzannotation,
-   bevor irgendein Ergebnis vorliegt ({doc}`../concepts/statistics`).
+   determines the smallest effect size of interest from the reference annotation
+   before any result is available ({doc}`../concepts/statistics`).
 3. **Experiment** – {py:func}`~docupilot.evaluation.experiment.run`:
-   leave-one-session-out über alle Sessions mit Grenzen der gewählten
-   Definition (mindestens zwei).
-4. **Bericht** – {py:func}`~docupilot.evaluation.report.analyse` macht aus der
-   Ergebnistabelle die Abbildungen.
+   leave-one-session-out over all sessions with boundaries of the chosen
+   definition (at least two).
+4. **Report** – {py:func}`~docupilot.evaluation.report.analyse` turns the
+   results table into the figures.
 
-## Ein Fold
+## One fold
 
-Jede Session ist einmal Testsession; alle anderen sind Trainingssessions. Von
-der Testsession wird nur die Aufnahme verwendet, nie ihre Annotation
+Each session is the test session once; all others are training sessions. Of
+the test session only the recording is used, never its annotation
 ({py:func}`~docupilot.evaluation.experiment.run_fold`).
 
 ```{mermaid}
 flowchart TB
-    T[Trainingssessions<br/>mit Annotation] --> C[Kalibrierung<br/>Audio-Vorlauf · θ, d]
-    C --> K[Kurven aller Sessions<br/>mit Fold-Parametern]
-    K --> F[Merkmale je Kandidat]
-    T --> L[Labels: Kandidat ≤ τ<br/>von einer Referenzgrenze]
-    F & L --> B[Baumzahl<br/>einmal je Fold]
-    B --> S[Schwelle je Koalition<br/>innere GroupKFold]
-    S --> W[Wald auf allen<br/>Trainingssessions]
-    W --> P[Testsession:<br/>Wahrscheinlichkeit je Kandidat]
-    P --> D[Schwelle · lokale Maxima · NMS 2 s]
-    D --> M[match gegen Referenz ±τ]
+    T[Training sessions<br/>with annotation] --> C[Calibration<br/>audio lead · θ, d]
+    C --> K[Curves of all sessions<br/>with fold parameters]
+    K --> F[Features per candidate]
+    T --> L[Labels: candidate ≤ τ<br/>from a reference boundary]
+    F & L --> B[Number of trees<br/>once per fold]
+    B --> S[Threshold per coalition<br/>inner GroupKFold]
+    S --> W[Forest on all<br/>training sessions]
+    W --> P[Test session:<br/>probability per candidate]
+    P --> D[Threshold · local maxima · NMS 2 s]
+    D --> M[match against reference ±τ]
 ```
 
-**Kalibrierung.** Audio-Vorlauf und das Paar (θ, d) des Videos werden nur aus
-den Trainingssessions bestimmt
+**Calibration.** The audio lead and the pair (θ, d) of the video are determined only from
+the training sessions
 ({py:func}`~docupilot.evaluation.calibration.calibrate`).
 
-**Kandidaten.** Standard ist ein festes Raster alle τ/5 = 0,2 s über die ganze
-Aufnahme, für jede Koalition gleich. So bekommt keine Modalität einen Vorteil,
-weil sie selbst bestimmt, wo überhaupt geprüft wird. Varianten: nur die Gipfel
-der eigenen Kurven (`own`) oder die aller Modalitäten (`union`).
+**Candidates.** The default is a fixed grid every τ/5 = 0.2 s over the whole
+recording, identical for every coalition. Thus no modality gains an advantage
+by determining itself where checks take place at all. Variants: only the peaks
+of its own curves (`own`) or those of all modalities (`union`).
 
-**Merkmale.** Je Kurve fünf Werte am Kandidaten: der Kurvenwert selbst, das
-Maximum in ±0,5τ, ±τ und ±2τ sowie der Rang des ±τ-Maximums innerhalb der
-Session. Eine Koalition liest nur die Spalten ihrer eigenen Modalitäten
+**Features.** Per curve, five values at the candidate: the curve value itself, the
+maximum within ±0.5τ, ±τ and ±2τ, and the rank of the ±τ maximum within the
+session. A coalition reads only the columns of its own modalities
 ({py:class}`~docupilot.evaluation.fusion.FeatureTable`).
 
-**Labels.** Ein Kandidat ist positiv, wenn er höchstens τ von einer
-Referenzgrenze entfernt liegt.
+**Labels.** A candidate is positive if it lies at most τ away from a
+reference boundary.
 
-**Entscheider.** Standard ist ein Random Forest mit ausgeglichenen
-Klassengewichten (Mindestblattgröße 5, je Baum 30 % der Zeilen). Die Zahl der
-Bäume wächst in Schritten zu 50 bis höchstens 300, bis sich der Brier-Score auf
-20 % zurückgehaltenen Trainingssessions in zwei Schritten um weniger als 0,001
-ändert – einmal je Fold auf der vollen Koalition, dann für alle Koalitionen
-gleich. Alternativen: logistische Regression (`logreg`) oder die untrainierte
-Regel A0 (`rule`: Maximum der Kurven, Gipfel ≥ 0,5).
+**Decider.** The default is a random forest with balanced
+class weights (minimum leaf size 5, 30 % of the rows per tree). The number of
+trees grows in steps of 50 up to at most 300, until the Brier score on
+20 % held-out training sessions changes by less than 0.001 over two steps
+– once per fold on the full coalition, then identical for all coalitions.
+Alternatives: logistic regression (`logreg`) or the untrained
+rule A0 (`rule`: maximum of the curves, peak ≥ 0.5).
 
-**Schwelle.** Für jede Koalition wird die Entscheidungsschwelle aus
-0,05 … 0,95 per innerer GroupKFold (5 Folds über die Trainingssessions)
-gewählt: Jede Wahrscheinlichkeit, an der die Schwelle gemessen wird, stammt aus
-einem Modell, das diese Session nicht gesehen hat.
+**Threshold.** For each coalition, the decision threshold is chosen from
+0.05 … 0.95 by inner GroupKFold (5 folds over the training sessions):
+every probability at which the threshold is measured stems from
+a model that has not seen this session.
 
-**Nachverarbeitung** ({py:func}`~docupilot.evaluation.fusion.decide`):
-Wahrscheinlichkeit ≥ Schwelle, lokale Maxima entlang der Zeit, dann
-Non-Maximum-Suppression mit 2 s Radius – von zwei Grenzen, die näher
-beieinander liegen, bleibt nur die stärkere.
+**Post-processing** ({py:func}`~docupilot.evaluation.fusion.decide`):
+probability ≥ threshold, local maxima along time, then
+non-maximum suppression with a 2 s radius – of two boundaries that lie closer
+together, only the stronger one remains.
 
-**Leere Koalition v(∅).** Ohne jede Modalität setzt die Baseline Grenzen im
-festen Abstand der mittleren Segmentlänge der Trainingssessions
-({py:class}`~docupilot.evaluation.fusion.EmptyBaseline`). Ohne diese Baseline
-würde die Shapley-Zerlegung informationsfreie Treffer auf die Modalitäten
-verteilen.
+**Empty coalition v(∅).** Without any modality, the baseline places boundaries at the
+fixed spacing of the mean segment length of the training sessions
+({py:class}`~docupilot.evaluation.fusion.EmptyBaseline`). Without this baseline,
+the Shapley decomposition would distribute information-free hits among the
+modalities.
 
-**Startwerte.** Wald und innere Splits laufen mit mehreren Startwerten
-(Standard 3); der F1-Wert je Session wird über sie gemittelt, bevor eine
-Statistik gebildet wird.
+**Seeds.** Forest and inner splits run with several seeds
+(default 3); the F1 score per session is averaged over them before any
+statistic is computed.
 
-## Ergebnistabelle
+## Results table
 
-Je (Session, Startwert, Koalition) eine Zeile mit Schwelle, kalibrierten
-Parametern, Zahl der vorhergesagten Grenzen, TP/FP/FN, Precision, Recall und
-F1 bei τ. Das Auswertungsfenster exportiert sie als CSV; jede Zahl des Berichts
-lässt sich daraus nachrechnen ({py:func}`~docupilot.evaluation.experiment.paired_metric`).
+One row per (session, seed, coalition) with threshold, calibrated
+parameters, number of predicted boundaries, TP/FP/FN, precision, recall and
+F1 at τ. The evaluation window exports it as CSV; every number of the report
+can be recomputed from it ({py:func}`~docupilot.evaluation.experiment.paired_metric`).
 
-## Bericht
+## Report
 
-{py:func}`~docupilot.evaluation.report.analyse` erzeugt genau die Zahlen der
-Abbildungen:
+{py:func}`~docupilot.evaluation.report.analyse` produces exactly the numbers of the
+figures:
 
-| Abbildung | Inhalt |
+| Figure | Content |
 |---|---|
-| Teilfrage 1 (Abb. 4.2) | F1 der Einzelmodalitäten und ohne Modalität, mit 95-%-Intervall |
-| Teilfrage 2 (Abb. 4.3) | F1 aller acht Kombinationen, mit 95-%-Intervall |
-| Teilfrage 2 (Abb. 4.4) | Shapley-Wert je Modalität, mit 95-%-Intervall |
-| Teilfrage 3 (Abb. 4.5) | Sättigungskurve: mittlerer F1 je Anzahl Modalitäten, Zuwächse zwischen den Punkten |
-| Teilfrage 3 (Abb. 4.6) | Zugewinn Δ(k) je hinzugenommener Modalität, mit 95-%-Intervall und ±SESOI-Band |
+| Sub-question 1 | F1 of the single modalities and without any modality, with 95 % interval |
+| Sub-question 2 | F1 of all eight combinations, with 95 % interval |
+| Sub-question 2 | Shapley value per modality, with 95 % interval |
+| Sub-question 3 | Saturation curve: mean F1 per number of modalities, increments between the points |
+| Sub-question 3 | Gain Δ(k) per added modality, with 95 % interval and ±SESOI band |
 
-Dazu die Statuszeile mit F1 aller Modalitäten und dem Verhältnis gesetzter zu
-annotierten Grenzen. Wie die Werte entstehen: {doc}`../concepts/statistics`.
+In addition, the status line with the F1 of all modalities and the ratio of placed to
+annotated boundaries. How the values arise: {doc}`../concepts/statistics`.
 
-## Prüfwerkzeuge
+## Inspection tools
 
-`python -m docupilot.evaluation.alignment <korpus>`
-: Vergleicht die Satzanfänge von Whisper und WhisperX je Session.
+`python -m docupilot.evaluation.alignment <corpus>`
+: Compares the sentence onsets of Whisper and WhisperX per session.
 
-`python -m docupilot.evaluation.repeatability <korpus>`
-: Lässt die Modelle dieselben Fragen ohne Cache erneut beurteilen und berichtet,
-  wie oft sich Kategorie und Wahrscheinlichkeit ändern. Verursacht
-  Modellaufrufe.
+`python -m docupilot.evaluation.repeatability <corpus>`
+: Has the models judge the same questions again without cache and reports
+  how often category and probability change. Incurs
+  model calls.

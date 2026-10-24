@@ -23,7 +23,7 @@ class RecordButtonWidget(QWidget):
 
         super().__init__(parent)
 
-        self._button = QPushButton("Aufnahme starten")
+        self._button = QPushButton("Start recording")
         self._button.setCheckable(True)
         self._button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._button.setSizePolicy(
@@ -98,7 +98,7 @@ class RecordButtonWidget(QWidget):
             self.record_stopped.emit()
 
     def _apply_start_style(self) -> None:
-        self._button.setText("Aufnahme starten")
+        self._button.setText("Start recording")
         self._button.setStyleSheet(
             """
             QPushButton {
@@ -122,7 +122,7 @@ class RecordButtonWidget(QWidget):
         )
 
     def _apply_stop_style(self) -> None:
-        self._button.setText("Aufnahme stoppen")
+        self._button.setText("Stop recording")
         self._button.setStyleSheet(
             """
             QPushButton {

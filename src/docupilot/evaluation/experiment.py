@@ -6,14 +6,14 @@ ever having seen that session's labels.
 One outer fold per session (leave-one-session-out):
 
     1. calibrate AUDIO_PEAK_SHARE and the video's noise threshold θ and
-       minimum rest d on the training sessions (C8)
+       minimum rest d on the training sessions
     2. draw every session's curves with those parameters — for the video this
        is where its changes are judged, once per session and (θ, d)
     3. the forest's size from the error on held-out training sessions, on the
-       full coalition (MA 3.3.1)
+       full coalition
     4. per start value and coalition: choose the threshold by an inner
        GroupKFold, fit the decider on all training sessions, predict the
-       held-out one (C4)
+       held-out one
 
 Steps 1–3 are deterministic and run once per fold; only step 4 is repeated
 per start value. A session's F1 is averaged over the start values before any
@@ -107,8 +107,6 @@ def subset_from_label(label: str) -> frozenset[str]:
     return frozenset() if label == EMPTY_SUBSET_LABEL else frozenset(label.split("+"))
 
 
-# ── Loading ───────────────────────────────────────────────────────────────────
-
 def load(
     directories: Sequence[Path],
     settings: Settings | None = None,
@@ -143,7 +141,7 @@ def load(
             return out
         if errors:
             raise RuntimeError(
-                f"{directory.name}: Modalität(en) fehlgeschlagen — "
+                f"{directory.name}: modality/modalities failed — "
                 + "; ".join(f"{m}: {msg.splitlines()[0]}" for m, msg in errors.items())
             )
         duration = dataset.duration_s(session)
@@ -157,8 +155,6 @@ def load(
             on_progress(directory.name, i, len(directories))
     return out
 
-
-# ── Measured settings ─────────────────────────────────────────────────────────
 
 def _annotation_runs(
     data: Sequence[SessionData], definition: str
@@ -182,8 +178,6 @@ def measure_sesoi(data: Sequence[SessionData], settings: Settings) -> Settings:
     sesoi, source = statistics.sesoi_from_reference(reference)
     return settings.replace(sesoi=sesoi, sesoi_source=source)
 
-
-# ── One fold ──────────────────────────────────────────────────────────────────
 
 def _param_key(modality: str, params: FoldParams) -> tuple:
     """The fold parameters a modality's curve actually depends on."""
@@ -299,8 +293,6 @@ def run_fold(
         for c in subsets(players) if c and kind != "rule"
     }
 
-    # The forest's size (MA 3.3.1): once per fold on the full coalition's
-    # training data, then the same for every coalition, start value and inner fit.
     n_trees = None
     if kind == "forest":
         n_trees, _ = fusion.tree_count(tables[tuple(sorted(players))][0], settings.seed)
@@ -342,8 +334,6 @@ def seeds_of(settings: Settings) -> list[int]:
     return [settings.seed + r for r in range(settings.n_seeds)]
 
 
-# ── The whole experiment ──────────────────────────────────────────────────────
-
 def usable(data: Sequence[SessionData], definition: str) -> list[SessionData]:
     """The sessions annotated under a definition (run 1)."""
     return [d for d in data if d.has(definition)]
@@ -371,9 +361,9 @@ def run(
     data = usable(data, definition)
     if len(data) < 2:
         raise ValueError(
-            "Leave-one-session-out braucht mindestens zwei Sessions mit Grenzen der "
-            f"Definition {definition!r} — mit einer gäbe es keine Trainingsdaten, die "
-            "die bewertete Session nicht enthalten."
+            "Leave-one-session-out needs at least two sessions with boundaries of the "
+            f"definition {definition!r} — with one there would be no training data that "
+            "does not contain the scored session."
         )
 
     result = ExperimentResult(settings)
@@ -415,8 +405,6 @@ def _score_fold(
         })
 
 
-# ── Reading the table ─────────────────────────────────────────────────────────
-
 def subset_values(
     rows: Sequence[dict], tau_s: float, metric: str = "f1"
 ) -> dict[frozenset[str], float]:
@@ -447,7 +435,7 @@ def paired_metric(
 
 
 def write_csv(rows: Sequence[dict], path: Path) -> None:
-    """Write the tidy table; figures for the thesis are generated from this file."""
+    """Write the tidy table, one row per session, start value and coalition."""
     if not rows:
         return
     fieldnames = list(dict.fromkeys(key for row in rows for key in row))

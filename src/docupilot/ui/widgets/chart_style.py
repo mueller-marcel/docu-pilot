@@ -15,7 +15,7 @@ AXIS = "#cccccc"
 TEXT = "#222222"
 MUTED = "#777777"
 
-PLACEHOLDER = "Noch keine Auswertung"
+PLACEHOLDER = "No evaluation yet"
 
 
 def paint_placeholder(painter: QPainter, rect: QRect) -> None:
@@ -35,5 +35,5 @@ def small_fonts(base: QFont) -> tuple[QFont, QFont]:
 
 
 def decimal(value: float, places: int) -> str:
-    """A number as the thesis writes it: fixed places, decimal comma, true minus."""
+    """A number with fixed places, decimal comma and true minus."""
     return f"{value:.{places}f}".replace(".", ",").replace("-", "−")

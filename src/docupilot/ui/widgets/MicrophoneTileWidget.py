@@ -24,6 +24,6 @@ class MicrophoneTileWidget(DeviceTileWidget):
             device_attr_name="microphone",
             preview_widget=icon_label,
             name_text=microphone.description(),
-            details_text="Audio-Eingabegerät",
+            details_text="Audio input device",
             parent=parent,
         )

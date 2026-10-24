@@ -32,7 +32,7 @@ class MediaInfo:
             return float(self.duration_raw)
         except ValueError:
             raise RuntimeError(
-                f"Dauer nicht lesbar — ffprobe lieferte {self.duration_raw!r}."
+                f"Duration not readable — ffprobe returned {self.duration_raw!r}."
             ) from None
 
     @classmethod

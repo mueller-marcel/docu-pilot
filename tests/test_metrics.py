@@ -1,6 +1,6 @@
 """
 The matching of predicted to annotated boundaries (metrics.match) and the
-annotation's edge rules — the measuring instrument every F1 of the thesis rests on.
+annotation's edge rules — the measuring instrument every F1 rests on.
 """
 
 import pytest
@@ -29,7 +29,6 @@ def test_prediction_beyond_tolerance_is_a_miss_on_both_sides():
 def test_one_to_one_second_prediction_near_the_same_boundary_is_false_positive():
     m = match([13.45], [12.96, 13.80], 1.0)
     assert (m.tp, m.fp, m.fn) == (1, 1, 0)
-    # The nearer prediction is kept.
     assert m.pairs == [(13.45, 13.80)]
 
 

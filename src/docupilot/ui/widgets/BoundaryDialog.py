@@ -15,21 +15,21 @@ from PySide6.QtWidgets import (
 from docupilot.recording.session import RecordingSession
 from docupilot.ui.formatting import format_ms
 
-_DEFINITION_TEXT = {"begin": "Beginn", "end": "Ende  "}
+_DEFINITION_TEXT = {"begin": "Begin", "end": "End  "}
 
 
 class BoundaryDialog(QDialog):
     """
-    Dialog zum Anzeigen und Löschen gesetzter Ground-Truth-Grenzen EINES Laufs.
+    Dialog for showing and deleting the ground-truth boundaries set in ONE run.
 
-    Die Grenzen anderer Läufe werden weder angezeigt noch verändert: Eine
-    Wiederholungsannotation muss blind bleiben, sonst misst der Retest nur,
-    wie gut der erste Lauf abgeschrieben wurde.
+    The boundaries of other runs are neither shown nor changed: a repeat
+    annotation must stay blind, otherwise the retest only measures how well
+    the first run was copied.
     """
 
     def __init__(self, boundaries: list[dict], run: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Gesetzte Grenzen · Lauf {run}")
+        self.setWindowTitle(f"Boundaries set · run {run}")
         self.setMinimumSize(460, 320)
         self.setModal(True)
 
@@ -52,7 +52,7 @@ class BoundaryDialog(QDialog):
         )
         layout.addWidget(self._list)
 
-        delete_btn = QPushButton("Ausgewählte löschen")
+        delete_btn = QPushButton("Delete selected")
         delete_btn.setStyleSheet(
             "QPushButton{background:#fff;color:#c0392b;border:1px solid #e74c3c;"
             "border-radius:6px;padding:5px 14px;font-size:12px;}"
@@ -60,7 +60,7 @@ class BoundaryDialog(QDialog):
         )
         delete_btn.clicked.connect(self._delete_selected)
 
-        close_btn = QPushButton("Schließen")
+        close_btn = QPushButton("Close")
         close_btn.setStyleSheet(
             "QPushButton{background:#fff;color:#333;border:1px solid #ccc;"
             "border-radius:6px;padding:5px 14px;font-size:12px;}"
@@ -85,7 +85,7 @@ class BoundaryDialog(QDialog):
 
     def _refresh_list(self) -> None:
         visible = self._visible()
-        self._header.setText(f"{len(visible)} Grenze(n) in Lauf {self._run}")
+        self._header.setText(f"{len(visible)} boundary(-ies) in run {self._run}")
         self._list.clear()
         for n, i in enumerate(visible, start=1):
             b = self._all[i]

@@ -1,13 +1,13 @@
 """
 Whether a measured difference is real or an accident of the sessions that
-happened to be recorded (C6).
+happened to be recorded.
 
 Shapley values and saturation steps are linear combinations of the v(S). They
 can therefore be computed PER SESSION and treated like any other measured
 quantity: mean, standard deviation and the 95 % t interval over the sessions.
 
-TF1 and TF2 are reported as value and interval. Only the saturation steps (TF3)
-are compared with 0 and with ±SESOI (MA 3.3.3, Abb. 3.5).
+Single modalities, combinations and Shapley values are reported as value and
+interval. Only the saturation steps are compared with 0 and with ±SESOI.
 """
 
 from __future__ import annotations
@@ -20,22 +20,17 @@ from itertools import combinations
 import numpy as np
 from scipy.stats import t
 
-# Session name -> that session's value of one quantity.
 PerSession = Mapping[str, float]
 PerSessionBySubset = Mapping[frozenset[str], PerSession]
 
-# Confidence level of every interval.
 LEVEL = 0.95
 
-# The five cases of MA 3.3.3, Abb. 3.5.
-RELEVANT = "R"         # CI fully outside ±SESOI: statistically and practically relevant
-SIGNIFICANT = "S"      # CI excludes 0, partly inside ±SESOI: only statistically relevant
-SIGNIFICANT_EQUIVALENT = "SÄ"  # CI excludes 0, fully inside ±SESOI: secured, but practically negligible
-EQUIVALENT = "Ä"       # CI contains 0, fully inside ±SESOI: negligible
-UNDECIDED = "U"        # CI contains 0 and reaches beyond ±SESOI: no statement
+RELEVANT = "R"
+SIGNIFICANT = "S"
+SIGNIFICANT_EQUIVALENT = "SE"
+EQUIVALENT = "E"
+UNDECIDED = "U"
 
-
-# ── Intervals ─────────────────────────────────────────────────────────────────
 
 def t_interval(values: Sequence[float], level: float = LEVEL) -> tuple[float, float, float]:
     """(estimate, lower, upper) of the mean of per-session values."""
@@ -50,7 +45,7 @@ def t_interval(values: Sequence[float], level: float = LEVEL) -> tuple[float, fl
 
 def sesoi_from_reference(reference: Mapping[str, Sequence[float]]) -> tuple[float, str]:
     """
-    The SESOI (MA 3.3.3) and its provenance: the mean over the sessions of
+    The SESOI and its provenance: the mean over the sessions of
     1/n_s, n_s the boundaries of session s in the reference annotation.
 
     The smallest meaningful unit of a segmentation is one boundary — found or
@@ -65,22 +60,22 @@ def sesoi_from_reference(reference: Mapping[str, Sequence[float]]) -> tuple[floa
     """
     counts = [len(b) for b in reference.values() if len(b)]
     if not counts:
-        raise ValueError("Keine Session mit Grenzen in der Referenzannotation — keine SESOI.")
+        raise ValueError("No session with boundaries in the reference annotation — no SESOI.")
     value = float(np.mean([1.0 / n for n in counts]))
     return value, (
-        f"Referenzannotation: Mittel von 1/n_s über {len(counts)} Sessions "
-        f"(n_s = {min(counts)} … {max(counts)}, Mittel {np.mean(counts):.1f} Grenzen) — "
-        f"eine weitere gefundene Grenze"
+        f"Reference annotation: mean of 1/n_s over {len(counts)} sessions "
+        f"(n_s = {min(counts)} … {max(counts)}, mean {np.mean(counts):.1f} boundaries) — "
+        f"one more boundary found"
     )
 
 
 def classify(lo: float, hi: float, sesoi: float) -> str:
     """
-    The five cases of MA 3.3.3 (Abb. 3.5, after Lakens et al. 2018):
+    The five cases of an interval against 0 and ±SESOI (after Lakens et al. 2018):
 
         R   CI fully outside [−SESOI, +SESOI]
-        SÄ  CI excludes 0 and lies fully inside ±SESOI
-        Ä   CI contains 0 and lies fully inside ±SESOI
+        SE  CI excludes 0 and lies fully inside ±SESOI
+        E   CI contains 0 and lies fully inside ±SESOI
         S   CI excludes 0 and lies partly inside ±SESOI
         U   CI contains 0 and reaches beyond ±SESOI
     """
@@ -93,8 +88,6 @@ def classify(lo: float, hi: float, sesoi: float) -> str:
         return SIGNIFICANT
     return UNDECIDED
 
-
-# ── One quantity ──────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class Estimate:
@@ -118,13 +111,11 @@ def estimate(name: str, values: Mapping[str, float]) -> Estimate:
     return Estimate(name, ordered, est, lo, hi)
 
 
-# ── Per-session game values ───────────────────────────────────────────────────
-
 def _sessions(per_session_by_subset: PerSessionBySubset) -> list[str]:
     names = sorted(next(iter(per_session_by_subset.values())))
     for scores in per_session_by_subset.values():
         if sorted(scores) != names:
-            raise KeyError("Alle Teilmengen müssen auf denselben Sessions bewertet sein")
+            raise KeyError("All subsets must be scored on the same sessions")
     return names
 
 
@@ -177,8 +168,6 @@ def efficiency_errors(
     }
 
 
-# ── Saturation point ──────────────────────────────────────────────────────────
-
 @dataclass(frozen=True)
 class SaturationPoint:
     """k*: the smallest number of modalities from which no further one adds a
@@ -190,14 +179,14 @@ class SaturationPoint:
 
 
 def relevant_gain(step: Estimate, sesoi: float) -> bool:
-    """A gain counts (MA 2.5) when it is on average at least the SESOI — one
+    """A gain counts when it is on average at least the SESOI — one
     more boundary — and statistically secured: its interval lies above 0."""
     return step.est >= sesoi and step.lo > 0.0
 
 
 def saturation_point(steps: Mapping[int, Estimate], sesoi: float) -> SaturationPoint:
     """
-    k* (MA 2.5) = the smallest number of modalities from which the gain of
+    k* = the smallest number of modalities from which the gain of
     every further modality is on average below the SESOI or not statistically
     secured: the last relevant step, or 0 when none is. k* equal to the number
     of modalities means no saturation within the measured range.

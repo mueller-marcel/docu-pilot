@@ -1,5 +1,5 @@
 """
-The parameters calibrated inside each outer fold (C8), from that fold's
+The parameters calibrated inside each outer fold, from that fold's
 TRAINING sessions only.
 
 No parameter may be fitted to labels of a session that is later scored. The
@@ -77,7 +77,7 @@ def calibrate_audio(
     settings: Settings,
 ) -> AudioCalibration:
     """
-    AUDIO_PEAK_OFFSET from the training sessions (MA 3.2.2): how long after its
+    AUDIO_PEAK_OFFSET from the training sessions: how long after its
     start a sentence's bell peaks.
 
     The narration announces each step while or just before it is carried out,

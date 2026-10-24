@@ -18,7 +18,7 @@ from docupilot.recording.session import DEFAULT_DEFINITION, RecordingSession
 
 def apply_edge_rules(times_s: Sequence[float], duration_s: float | None) -> list[float]:
     """
-    The guideline's edge rules (N3): boundaries in the first or last GT_EDGE_S
+    The guideline's edge rules: boundaries in the first or last GT_EDGE_S
     seconds are dropped, and boundaries closer than GT_MERGE_S are merged into
     their mean — a double click on the annotation button is one boundary.
 
@@ -74,6 +74,6 @@ def duration_s(session: RecordingSession) -> float:
         return info.duration_s
     except RuntimeError:
         raise RuntimeError(
-            f"Dauer von {session.recording_path} nicht lesbar — ffprobe lieferte "
+            f"Duration of {session.recording_path} not readable — ffprobe returned "
             f"{info.duration_raw!r}."
         ) from None

@@ -40,7 +40,7 @@ class _EventRow(QWidget):
         self._active = False
 
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setToolTip(f"Springe zu {format_ms(ev.get('t_ms', 0.0))}")
+        self.setToolTip(f"Jump to {format_ms(ev.get('t_ms', 0.0))}")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 3, 8, 3)
@@ -101,7 +101,7 @@ class _EventRow(QWidget):
 
 
 class EventsPanelWidget(QWidget):
-    """Scrollbare Event-Sidebar mit Live-Highlighting der aktuellen Abspielposition."""
+    """Scrollable event sidebar with live highlighting of the current playback position."""
 
     jumped = Signal(float)
 
@@ -119,7 +119,7 @@ class EventsPanelWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        header = QLabel(f"  Events  ·  ±{int(self.TOLERANCE_MS)} ms  ·  klicken zum Springen")
+        header = QLabel(f"  Events  ·  ±{int(self.TOLERANCE_MS)} ms  ·  click to jump")
         header.setFixedHeight(32)
         header.setStyleSheet(
             "background:#f0f0f0; color:#777; font-size:11px;"

@@ -104,7 +104,7 @@ def delete(paths: Sequence[Path]) -> DeletionResult:
     refused = [p for p in paths if p.name in PROTECTED_NAMES or p.name not in generated]
     if refused:
         raise ValueError(
-            "Keine generierten Dateien, Löschen verweigert: " + ", ".join(map(str, refused))
+            "Not generated files, deletion refused: " + ", ".join(map(str, refused))
         )
 
     deleted: list[Path] = []
