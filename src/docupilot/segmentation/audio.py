@@ -1,40 +1,37 @@
 """
 Action boundaries from the audio track alone: each narrated sentence is judged by
-an LLM, and each sentence draws a window, as high as its boundary probability,
-that peaks where its step is expected to begin.
+an LLM, and each sentence draws a bell, as high as its boundary probability,
+over the sentence's own interval (MA 3.2.2).
 
-The curve follows "Evidenzkurven: Breite τ und Gipfel", section 3: per sentence
-a raised-cosine window [L_j, R_j] with its peak c_j = anchor_j + d, merged by
-pointwise maximum.
+Audio knows the INTERVAL a boundary falls in, never the instant. Per sentence
+the bell spans [s_j, e_j] — as wide as the sentence — and peaks at
+c_j = s_j + m_B, the announcement's lead measured in-fold as the median
+distance sentence start → boundary (calibration.calibrate_audio). Bells are
+merged by pointwise maximum.
+
+Two sub-curves, both of this one modality: "judged" with the LLM's boundary
+probability as height, and "announced" with height 1 for every sentence — the
+participants were asked to announce each step, so that a sentence begins is
+itself evidence, whatever the LLM makes of its wording.
 
 Two stages (C8):
 
     extract_raw(session)   Whisper sentences (start, end, text) + one LLM
                            verdict each — expensive, cached, fold-independent
     render(raw, ...)       where each verdict is drawn — cheap, depends on the
-                           anchor and the offset calibrated in-fold
-
-Audio knows the INTERVAL a boundary falls in, never the instant. Under the
-"begin" definition the boundary belongs to THIS announcement, not the next: it
-sits at a signed offset d from an anchor of the sentence (its start or its end).
-d may be negative — in instructional recordings speech both precedes and
-trails the action — so the peak may lie up to P = 2τ before the sentence.
+                           peak share calibrated in-fold
 """
 
 from __future__ import annotations
 
 import threading
 from bisect import bisect_left, bisect_right
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
 
-from docupilot.config import (
-    AUDIO_PEAK_MAX_SHARE,
-    FoldParams,
-    Settings,
-)
+from docupilot.config import GRID_HZ, FoldParams, Settings
 from docupilot.recording.session import RecordingSession
 from docupilot.segmentation import store
 from docupilot.segmentation.evidence import (
@@ -86,10 +83,6 @@ class AudioRaw:
     sentences: list[Sentence]
     model: str = ""
     retrieved_at: str = ""
-
-    def windows(self, last_gap_s: float) -> list[tuple[float, float]]:
-        """(s_j, R_j) per sentence, see sentence_windows."""
-        return sentence_windows([s.start_s for s in self.sentences], last_gap_s)
 
 
 # ── Models ────────────────────────────────────────────────────────────────────
@@ -265,56 +258,14 @@ def _duration_s(session: RecordingSession) -> float:
 
 # ── Geometry ──────────────────────────────────────────────────────────────────
 
-def sentence_windows(starts_s: Sequence[float], last_gap_s: float) -> list[tuple[float, float]]:
+def bell_geometry(sentence: Sentence, peak_offset_s: float) -> tuple[float, float, float]:
     """
-    (s_j, R_j) per sentence: R_j = s_{j+1}, the start of the next announcement.
-
-    The last window has no following announcement to close it:
-    R_J = s_J + med_k(s_{k+1} − s_k), the session's own median gap (a fast
-    speaker gets a shorter one); with a single sentence there is no gap and
-    `last_gap_s` (Settings.last_gap_s, 4τ) is used.
+    (L, c, R) of a sentence's bell: L = s, c = s + offset, R = e — or one grid
+    step past c when the sentence ends before its peak, so it is drawn.
     """
-    if not len(starts_s):
-        return []
-    gaps = np.diff(starts_s)
-    horizon = float(np.median(gaps)) if len(gaps) else last_gap_s
-    ends = [*starts_s[1:], starts_s[-1] + horizon]
-    return list(zip((float(s) for s in starts_s), (float(e) for e in ends)))
-
-
-def anchor_time(sentence: Sentence, anchor: str) -> float:
-    """The sentence's start or end, whichever the fold's calibration chose."""
-    return sentence.start_s if anchor == "begin" else sentence.end_s
-
-
-def window_geometry(
-    sentences: Sequence[Sentence],
-    windows: Sequence[tuple[float, float]],
-    *,
-    anchor: str,
-    offset_s: float,
-    pre_s: float,
-) -> list[tuple[float, float, float]]:
-    """
-    (L_j, c_j, R_j) of each sentence's window in seconds:
-
-        c*_j = anchor_j + d
-        c_j  = min(max(c*_j, s_j − P), s_j + 0.9 (R_j − s_j))     P = `pre_s` = 2τ
-        L_j  = max(min(s_j, c_j), c_{j−1})
-
-    The peak may lie up to P before the sentence (acting first, narrating
-    after) and at most 90 % into the window; the curve never starts before the
-    previous sentence's peak.
-    """
-    out: list[tuple[float, float, float]] = []
-    previous_peak = -np.inf
-    for sentence, (s_j, r_j) in zip(sentences, windows):
-        peak = anchor_time(sentence, anchor) + offset_s
-        peak = min(max(peak, s_j - pre_s), s_j + AUDIO_PEAK_MAX_SHARE * (r_j - s_j))
-        left = max(min(s_j, peak), previous_peak)
-        out.append((left, peak, r_j))
-        previous_peak = peak
-    return out
+    left = sentence.start_s
+    peak = left + peak_offset_s
+    return left, peak, max(sentence.end_s, peak + 1.0 / GRID_HZ)
 
 
 # ── Stage 1: raw ──────────────────────────────────────────────────────────────
@@ -448,29 +399,27 @@ def render(
     raw: AudioRaw, settings: Settings, params: FoldParams | None = None
 ) -> BoundaryEvidence:
     """
-    Draw each judged sentence as a raised-cosine window of height p_j, merged
-    by pointwise maximum. Sentences with p_j = 0 draw nothing but still close
-    the previous window and pass on their peak.
+    Draw each sentence as a bell (raised cosine) over its interval, peaking at
+    the in-fold offset after its start, merged by pointwise maximum: of height
+    p_j on "judged", of height 1 on "announced".
 
-    :param settings: supplies P = 2τ and the last window's fallback 4τ.
-    :param params: supplies AUDIO_ANCHOR and PEAK_OFFSET_S, calibrated in-fold.
+    :param settings: unused — the bell's width is the sentence's own.
+    :param params: supplies AUDIO_PEAK_OFFSET, calibrated in-fold.
     """
     params = params or FoldParams()
     times_s = grid(raw.duration_s)
     if len(times_s) == 0:
         return BoundaryEvidence.empty()
-    score = np.zeros(len(times_s), dtype=np.float32)
+    judged = np.zeros(len(times_s), dtype=np.float32)
+    announced = np.zeros(len(times_s), dtype=np.float32)
 
-    geometry = window_geometry(
-        raw.sentences, raw.windows(settings.last_gap_s),
-        anchor=params.audio_anchor,
-        offset_s=params.peak_offset_s,
-        pre_s=settings.pre_s,
-    )
     boundaries_s: list[float] = []
-    for sentence, (left_s, peak_s, right_s) in zip(raw.sentences, geometry):
-        draw_window(score, times_s, left_s, peak_s, right_s, sentence.p_boundary)
+    for sentence in raw.sentences:
+        left_s, peak_s, right_s = bell_geometry(sentence, params.audio_peak_offset_s)
+        draw_window(judged, times_s, left_s, peak_s, right_s, sentence.p_boundary)
+        draw_window(announced, times_s, left_s, peak_s, right_s, 1.0)
         if sentence.p_boundary >= BOUNDARY_THRESHOLD:
             boundaries_s.append(peak_s)
 
-    return BoundaryEvidence(times_s, score, boundaries_s)
+    return BoundaryEvidence(times_s, judged, boundaries_s,
+                            channels={"judged": judged, "announced": announced})

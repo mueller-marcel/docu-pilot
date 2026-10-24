@@ -4,21 +4,22 @@ with where its value comes from.
 
 A parameter is either fixed before any label was seen (a priori, technical,
 set), frozen because re-tuning it would cost model calls, measured from the
-corpus' repeated annotation (τ, SESOI), or calibrated inside each outer fold on
+corpus' annotation (the SESOI from the reference), or
+calibrated inside each outer fold on
 that fold's TRAINING sessions only. `PARAMETERS` states which, and the report
 prints that table.
 
-`Settings` holds the switches of one run and is what a variant (C12) changes.
+`Settings` holds the switches of one run.
 The switches are stored as JSON beside the corpus (`SETTINGS_FILE`) so a run
-can be archived together with its configuration. τ and the SESOI are never
-stored there: every run measures them from the corpus (experiment.measure_tau,
-experiment.measure_sesoi) and carries them with their provenance.
+can be archived together with its configuration. The SESOI is never stored
+there: every run measures it from the corpus (experiment.measure_sesoi) and
+carries it with its provenance.
 """
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -27,18 +28,27 @@ from typing import Any
 BOUNDARY_DEFINITIONS: tuple[str, ...] = ("begin", "end")
 CANDIDATE_POOLS: tuple[str, ...] = ("grid", "own", "union")
 DECIDERS: tuple[str, ...] = ("rule", "logreg", "forest")
-AUDIO_ANCHORS: tuple[str, ...] = ("begin", "end")
 EVENT_CHANNEL_SETS: tuple[str, ...] = ("all", "rest")
 ASR_ALIGNMENTS: tuple[str, ...] = ("whisper", "whisperx")
-CI_METHODS: tuple[str, ...] = ("naive", "nadeau_bengio")
-MULTIPLICITY: tuple[str, ...] = ("none", "bonferroni")
-SESOI_RULES: tuple[str, ...] = ("mean_abs", "sd")
 
-# ── Fixed values (not part of a variant) ──────────────────────────────────────
+# ── Fixed values ──────────────────────────────────────
 
 # Sampling grid of every evidence curve, E[n] = E(n / GRID_HZ), and of the
 # untrained rule decider A0. Technical.
 GRID_HZ = 50.0
+
+# Tolerance τ of the evaluation: a prediction within ±τ of an annotated boundary
+# is a hit. A priori, from the GEBD protocol (consistency F1 over 0.2 … 1.0 s,
+# Shou et al. 2021) — subtask boundaries in screencasts cannot be placed more
+# finely (ToolScape: hits 2.7 s off on average, Kim et al. 2014). Can be changed
+# in the settings file; the robustness sweep scores the other tolerances anyway.
+TOLERANCE_S = 1.0
+
+# Radius of the non-maximum suppression after the decider: of two predicted
+# boundaries closer than this only the stronger one survives. A priori from the
+# annotation's own granularity — workflow steps follow each other no closer than
+# 3 s, so one sub-step never produces two boundaries.
+NMS_S = 2.0
 
 # Candidates of the "grid" pool per τ: spacing τ/5, so the grid stays far below
 # the tolerance whatever τ the retest yields. Technical.
@@ -49,41 +59,46 @@ CAND_PER_TAU = 5
 # modality; the rank feature uses the ±τ window.
 FEATURE_WINDOWS_TAU: tuple[float, ...] = (0.5, 1.0, 2.0)
 
-# τ for DISPLAYING a single recording in the feature dialog, which belongs to no
-# corpus. Never used by an evaluation: Settings has no τ until it is measured.
-DISPLAY_TAU_S = 1.0
+# τ for DISPLAYING a single recording in the feature dialog.
+DISPLAY_TAU_S = TOLERANCE_S
 
 # Decision thresholds the inner cross-validation picks from (C4).
 THRESHOLD_GRID: tuple[float, ...] = tuple(round(0.05 * k, 2) for k in range(1, 20))
 
 # Folds of the inner GroupKFold that chooses the threshold (C4).
 INNER_FOLDS = 5
-# Trees of the final forest and of the cheaper inner fits (C4).
-FOREST_TREES = 300
-FOREST_TREES_INNER = 200
 
-# Tolerances the predictions are scored at besides the measured τ (robustness).
-TAU_SWEEP_S: tuple[float, ...] = (0.25, 0.5, 1.0, 1.5, 2.0, 3.0)
-
-# Audio: how far a peak may lie BEFORE its sentence, P = 2τ; a priori (C1c).
-PRE_TAU = 2.0
-# Audio: the last window is closed by the session's median gap between
-# announcements; with a single sentence there is none and 4τ is used.
-LAST_GAP_TAU = 4.0
-# Audio: upper bound of the peak, as a share of the sentence's window (C1c).
-AUDIO_PEAK_MAX_SHARE = 0.9
+# The forest's size (MA 3.3.1): grown in steps of FOREST_TREES_STEP until the
+# error on held-out training sessions changes by less than TREES_STABLE_TOL for
+# TREES_STABLE_STEPS steps in a row, at most FOREST_TREES_MAX. Found once per
+# outer fold on the full coalition and then used for every coalition, seed and
+# inner fit, so all coalitions run with the same settings.
+#
+# Held-out SESSIONS, not out-of-bag rows: neighbouring grid candidates lie τ/5
+# apart and are near copies, so a row's out-of-bag vote comes from trees that
+# saw its neighbours — measured on this corpus the OOB probabilities rank the
+# boundaries worse than chance (AUC < 0.4) while held-out sessions give 0.8.
+FOREST_TREES_STEP = 50
+FOREST_TREES_MAX = 300
+TREES_HOLDOUT_SHARE = 0.2
+TREES_STABLE_TOL = 0.001          # Brier score
+TREES_STABLE_STEPS = 2
+# TECHNICAL. Leaf size and bootstrap share of every tree: regularise the
+# forest on ~10⁵ strongly autocorrelated grid rows and keep a fit to seconds.
+FOREST_MIN_SAMPLES_LEAF = 5
+FOREST_MAX_SAMPLES = 0.3
 
 # In-fold calibration (C8).
 AUDIO_MIN_PAIRS = 10
 # Video: noise threshold θ (frame still when its smallest tile SSIM to the
 # previous frame is ≥ θ) and minimum rest duration d, chosen per fold by the
-# pooled candidate F1 of the change onsets. Ranges: d from three frames up to the
-# value of Video2Action, θ from the value of GIFdroid up to nearly 1.
-VIDEO_THETA_CANDIDATES: tuple[float, ...] = (0.95, 0.98, 0.99, 0.995, 0.998)
-VIDEO_MIN_REST_CANDIDATES_S: tuple[float, ...] = (0.3, 0.5, 0.7, 1.0)
+# pooled candidate F1 of the change onsets. The ranges enclose the optimum on
+# both sides — the former grid (θ ≥ 0.95, d ≤ 1 s) put every fold in its corner.
+VIDEO_THETA_CANDIDATES: tuple[float, ...] = (0.85, 0.9, 0.95, 0.98)
+VIDEO_MIN_REST_CANDIDATES_S: tuple[float, ...] = (0.5, 1.0, 1.5, 2.0, 3.0)
 # What the feature dialog draws with — outside an experiment there is no fold.
-VIDEO_THETA_DEFAULT = 0.99
-VIDEO_MIN_REST_DEFAULT_S = 0.5
+VIDEO_THETA_DEFAULT = 0.9
+VIDEO_MIN_REST_DEFAULT_S = 2.0
 
 # Rule decider A0 (C7): weights of the three event sub-curves in the combined
 # event curve — a priori; the class change is the weakest signal (C14).
@@ -160,34 +175,41 @@ class Parameter:
 PARAMETERS: tuple[Parameter, ...] = (
     Parameter("BURST_PAUSE_S", "2,0 s", A_PRIORI,
               "Literaturwert der Schreibprozessforschung (Wengelin 2006); Sensitivität 1/2/3 s"),
-    Parameter("τ", "Formel 3.1", MEASURED,
-              "mittlere Abweichung gepaarter Grenzen der Wiederholungsannotation, vor dem "
-              "Lauf; Paarung bis zur Hälfte des kleinsten Grenzabstands in Lauf 1. Ohne "
-              "Wiederholung kein Lauf"),
-    Parameter("SESOI", "Regel N5", MEASURED,
-              "F1 des vollen Modells gegen Lauf 1 minus gegen Lauf 2, je Retest-Session; "
-              "nach dem Primärlauf, vor der Statistik"),
-    Parameter("SPREAD_S (σ), LABEL_TOL_S, NMS_S", "= τ", A_PRIORI,
-              "an τ gebunden; ändert sich τ, ziehen sie mit. Glocke bei 3σ abgeschnitten"),
-    Parameter("Merkmalsfenster, Rang-Fenster, Abstand A0", "±0,5τ/τ/2τ, τ, τ", A_PRIORI,
-              "an τ gebunden"),
+    Parameter("τ (Toleranz)", "1,0 s", A_PRIORI,
+              "GEBD-Protokoll (Shou et al. 2021, 0,2 … 1,0 s); Toleranz-Sweep 0,25 … 3 s "
+              "als Robustheit"),
+    Parameter("SESOI", "Abschnitt 3.3.3", MEASURED,
+              "eine weitere gefundene Grenze: Mittel von 1/n_s über die Sessions der "
+              "Referenzannotation (Lakens et al. 2018, kleinste Einheit der Messung); vor "
+              "dem Lauf, unabhängig vom Ergebnis"),
+    Parameter("SPREAD_S (σ)", "= τ/3", A_PRIORI,
+              "Glocke eines Zeitpunkt-Hinweises hat die Breite des Toleranzfensters: "
+              "bei ±3σ = ±τ abgeschnitten"),
+    Parameter("LABEL_TOL_S", "= τ", A_PRIORI, "an τ gebunden"),
+    Parameter("NMS_S (auch Abstand A0)", "2,0 s", A_PRIORI,
+              "Granularität der Annotation: Schritte folgen frühestens nach 3 s aufeinander"),
+    Parameter("Merkmalsfenster, Rang-Fenster", "±0,5τ/τ/2τ, τ", A_PRIORI, "an τ gebunden"),
     Parameter("Kandidatenabstand", "τ/5", A_PRIORI, "an τ gebunden, bleibt weit unter τ"),
-    Parameter("PRE_S", "= 2τ", A_PRIORI, "wie weit ein Audio-Gipfel vor dem Satz liegen darf"),
-    Parameter("AUDIO_PEAK_MAX_SHARE", "0,9", A_PRIORI, "Audio-Gipfel höchstens 90 % ins Fenster"),
-    Parameter("Letztes Audio-Fenster", "Median / 4τ", A_PRIORI,
-              "Median der Ansageabstände der Session; bei nur einem Satz 4τ"),
     Parameter("GRID_HZ", "50 Hz", TECHNICAL, "Abtastung der Evidenzkurven"),
     Parameter("_SETTLE_OFFSET_S, _PIXEL_CHANGE_EPS", "0,2 s / 1,0", SET,
               "fest; nicht getunt, nur als gesetzt dokumentiert"),
     Parameter("_MAX_CALLS", "400", TECHNICAL, "fest; Treffer je Session im Bericht"),
-    Parameter("AUDIO_ANCHOR, PEAK_OFFSET_S", "–", IN_FOLD,
-              "Anker mit kleinerer Streuung, d = Median mit Vorzeichen; < 10 Paare → "
-              "Satzbeginn, d = 0"),
-    Parameter("Ruhe-Höhe (Ereignisse)", "Rang / n", A_PRIORI,
-              "Perzentilrang der Pause vor dem Burst innerhalb der Session; nutzt nur die "
-              "belegte Rangfolge (längere Pausen vor Grenzen), parameterfrei"),
+    Parameter("Bäume des Random Forest", "50 … 300", IN_FOLD,
+              "je Fold, bis der Fehler (Brier) auf 20 % zurückgehaltenen Trainingssessions "
+              "stabil ist (Schritte zu 50, zwei Schritte < 0,001); OOB ist auf dem Raster "
+              "verzerrt, weil Nachbarkandidaten fast identisch sind"),
+    Parameter("FOREST_MIN_SAMPLES_LEAF, FOREST_MAX_SAMPLES", "5 / 0,3", TECHNICAL,
+              "Regularisierung und Laufzeit; für alle Koalitionen gleich"),
+    Parameter("Startwerte", "n_seeds", SET,
+              "Wald und innere Splits je Startwert; F1 je Session über die Startwerte "
+              "gemittelt, bevor Statistik gebildet wird"),
+    Parameter("AUDIO_PEAK_OFFSET_S", "–", IN_FOLD,
+              "Gipfel der Satzglocke bei Satzbeginn + m_B, m_B = Median des Abstands "
+              "Satzbeginn → erste Referenzgrenze im Satz (±τ); < 10 Paare → Satzbeginn"),
+    Parameter("Ruhe-Höhe (Ereignisse)", "Pause / längste Pause", A_PRIORI,
+              "Dauer der Pause vor dem Burst, normiert auf die längste Pause der Session"),
     Parameter("θ (Rauschschwelle), d (Mindestdauer)", "–", IN_FOLD,
-              "Auswahl aus θ ∈ {0,95; 0,98; 0,99; 0,995; 0,998} × d ∈ {0,3; 0,5; 0,7; 1,0} s "
+              "Auswahl aus θ ∈ {0,85; 0,9; 0,95; 0,98} × d ∈ {0,5; 1; 1,5; 2; 3} s "
               "über das gepoolte Kandidaten-F1 der Änderungsbeginne (±τ, 1:1); Gleichstand → "
               "weniger Änderungen, dann längeres d"),
     Parameter("Entscheidungsschwelle", "–", IN_FOLD, "innere GroupKFold (5) über die Trainingssessions"),
@@ -208,14 +230,14 @@ class FoldParams:
     chosen again costs no model call.
     """
 
-    audio_anchor: str = "begin"
-    peak_offset_s: float = 0.0
+    audio_peak_offset_s: float = 0.0
+    """How far after its start a sentence's bell peaks: the announcement's lead."""
     video_theta: float = VIDEO_THETA_DEFAULT
     video_min_rest_s: float = VIDEO_MIN_REST_DEFAULT_S
 
     def __post_init__(self) -> None:
-        if self.audio_anchor not in AUDIO_ANCHORS:
-            raise ValueError(f"audio_anchor = {self.audio_anchor!r}; erlaubt: {AUDIO_ANCHORS}")
+        if self.audio_peak_offset_s < 0.0:
+            raise ValueError(f"audio_peak_offset_s = {self.audio_peak_offset_s}; erwartet ≥ 0")
         if not 0.0 < self.video_theta < 1.0:
             raise ValueError(f"video_theta = {self.video_theta}; erwartet (0, 1)")
         if self.video_min_rest_s <= 0:
@@ -227,46 +249,35 @@ class FoldParams:
 SETTINGS_FILE = "docupilot_settings.json"
 
 # Measured per run from the corpus, never read from or written to the file.
-_MEASURED_FIELDS: tuple[str, ...] = ("tau_primary_s", "tau_source", "sesoi", "sesoi_source")
+_MEASURED_FIELDS: tuple[str, ...] = ("sesoi", "sesoi_source")
 
-# The sensitivity runs of the method comparison (C12). Each entry overrides the
-# primary settings; every variant is a full run over all 8 coalitions.
-DEFAULT_VARIANTS: tuple[dict[str, Any], ...] = (
-    {"decider": "rule"},                  # A0 (C7)
-    {"candidate_pool": "union"},          # timing credit (C2)
-    {"event_channels": "rest"},           # event modality without C14
-)
 
 
 @dataclass(frozen=True)
 class Settings:
     """
-    The switches of one run. `replace(**overrides)` makes a variant.
+    The switches of one run.
 
-    τ and the SESOI are None until a run has measured them from the corpus;
-    everything bound to τ refuses to answer before that.
+    The SESOI is None until a run has measured it from the corpus.
     """
 
     boundary_definition: str = "begin"
     candidate_pool: str = "grid"
     decider: str = "forest"
     burst_pause_s: float = 2.0
-    event_channels: str = "all"
+    event_channels: str = "rest"
     asr_alignment: str = "whisper"
 
-    tau_primary_s: float | None = None
-    tau_source: str = ""
+    tau_primary_s: float = TOLERANCE_S
+    tau_source: str = "a priori, GEBD-Protokoll"
     sesoi: float | None = None
     sesoi_source: str = ""
-    sesoi_rule: str = "mean_abs"
 
-    ci_level: float = 0.95
-    ci_method: str = "nadeau_bengio"
-    multiplicity: str = "none"
-    bootstrap_check: bool = False
     seed: int = 0
-
-    variants: tuple[dict[str, Any], ...] = field(default=DEFAULT_VARIANTS)
+    # Start values of the primary run; F1 per session is averaged over them
+    # before any statistic, which removes the forest's own randomness from the
+    # session-to-session spread. Variants run with one.
+    n_seeds: int = 3
 
     def __post_init__(self) -> None:
         for name, allowed in (
@@ -275,9 +286,6 @@ class Settings:
             ("decider", DECIDERS),
             ("event_channels", EVENT_CHANNEL_SETS),
             ("asr_alignment", ASR_ALIGNMENTS),
-            ("ci_method", CI_METHODS),
-            ("multiplicity", MULTIPLICITY),
-            ("sesoi_rule", SESOI_RULES),
         ):
             value = getattr(self, name)
             if value not in allowed:
@@ -286,29 +294,27 @@ class Settings:
             value = getattr(self, name)
             if value is not None and not value > 0:
                 raise ValueError(f"{name} = {value}; muss positiv sein")
-        if not 0.0 < self.ci_level < 1.0:
-            raise ValueError(f"ci_level = {self.ci_level}; erwartet (0, 1)")
-        object.__setattr__(self, "variants", tuple(dict(v) for v in self.variants))
+        if self.n_seeds < 1:
+            raise ValueError(f"n_seeds = {self.n_seeds}; mindestens 1")
 
     @property
     def tau_s(self) -> float:
-        """The measured τ; raises before it was measured."""
-        if self.tau_primary_s is None:
-            raise ValueError("τ ist noch nicht aus der Wiederholungsannotation gemessen")
+        """The tolerance τ."""
         return self.tau_primary_s
 
     @property
     def sesoi_value(self) -> float:
         """The measured SESOI; raises before it was measured."""
         if self.sesoi is None:
-            raise ValueError("SESOI ist noch nicht aus der Wiederholungsannotation gemessen")
+            raise ValueError("SESOI ist noch nicht aus der Referenzannotation bestimmt")
         return self.sesoi
 
     # Sizes bound to τ (C8): changing τ moves them along.
     @property
     def spread_s(self) -> float:
-        """σ of the bell around a point hint."""
-        return self.tau_s
+        """σ of the bell around a point hint: τ/3, so the bell, cut off at 3σ,
+        is exactly as wide as the tolerance window ±τ (MA 3.2.2)."""
+        return self.tau_s / 3.0
 
     @property
     def label_tol_s(self) -> float:
@@ -316,15 +322,7 @@ class Settings:
 
     @property
     def nms_s(self) -> float:
-        return self.tau_s
-
-    @property
-    def pre_s(self) -> float:
-        return PRE_TAU * self.tau_s
-
-    @property
-    def last_gap_s(self) -> float:
-        return LAST_GAP_TAU * self.tau_s
+        return NMS_S
 
     @property
     def cand_spacing_s(self) -> float:
@@ -337,16 +335,11 @@ class Settings:
     def replace(self, **changes: Any) -> Settings:
         return replace(self, **changes)
 
-    def variant(self, overrides: dict[str, Any]) -> Settings:
-        """This run with some switches changed; a variant has no variants of its own."""
-        return replace(self, **overrides, variants=())
-
     def to_dict(self) -> dict[str, Any]:
-        """The switches, without the measured τ and SESOI."""
+        """The switches, without the measured SESOI."""
         data = asdict(self)
         for name in _MEASURED_FIELDS:
             del data[name]
-        data["variants"] = [dict(v) for v in self.variants]
         return data
 
     @classmethod
@@ -354,17 +347,14 @@ class Settings:
         measured = sorted(set(data) & set(_MEASURED_FIELDS))
         if measured:
             raise ValueError(
-                f"{', '.join(measured)} lassen sich nicht setzen — τ und SESOI werden bei "
-                "jedem Lauf aus der Wiederholungsannotation gemessen."
+                f"{', '.join(measured)} lässt sich nicht setzen — die SESOI wird bei "
+                "jedem Lauf aus der Annotation gemessen."
             )
         known = {f.name for f in fields(cls)}
         unknown = sorted(set(data) - known)
         if unknown:
             raise ValueError(f"Unbekannte Einstellungen: {', '.join(unknown)}")
-        values = dict(data)
-        if "variants" in values:
-            values["variants"] = tuple(values["variants"])
-        return cls(**values)
+        return cls(**data)
 
 
 def load_settings(path: Path) -> Settings:

@@ -32,7 +32,7 @@ _BY_NAME = {m.MODALITY: m for m in _EXTRACTORS}
 
 # Version of how a lane is drawn (evidence.py). Bump it when the curve shapes
 # change, so a lane stored with the old shapes is a miss rather than served.
-_CURVE_FORMAT = 2
+_CURVE_FORMAT = 4
 
 
 def render(
@@ -53,8 +53,8 @@ def lane_key(modality: str, settings: Settings, params: FoldParams | None = None
     return "|".join(str(v) for v in (
         _CURVE_FORMAT, _BY_NAME[modality].raw_key(settings),
         settings.boundary_definition, settings.spread_s,
-        settings.event_channels, params.audio_anchor,
-        params.peak_offset_s, params.video_theta, params.video_min_rest_s,
+        settings.event_channels, params.audio_peak_offset_s,
+        params.video_theta, params.video_min_rest_s,
     ))
 
 
