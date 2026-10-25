@@ -1,123 +1,123 @@
 # DocuPilot
 
-**Software-Workflows aufzeichnen und automatisch in Handlungsschritte zerlegen –
-aus Bildschirm, Sprache und Eingaben.**
+**Record software workflows and break them into action steps automatically –
+from screen, speech and input.**
 
 [![Pull Request](https://github.com/mueller-marcel/docu-pilot/actions/workflows/pull-request.yml/badge.svg)](https://github.com/mueller-marcel/docu-pilot/actions/workflows/pull-request.yml)
 ![Python](https://img.shields.io/badge/python-3.13%20%7C%203.14-3776AB?logo=python&logoColor=white)
-![Poetry](https://img.shields.io/badge/packaging-poetry-60A5FA?logo=poetry&logoColor=white)
+![uv](https://img.shields.io/badge/packaging-uv-DE5FE9?logo=uv&logoColor=white)
 ![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)
 ![Sphinx](https://img.shields.io/badge/docs-sphinx-0A507A?logo=sphinx&logoColor=white)
 
 ---
 
-Wer eine Anleitung für eine Software schreibt, zerlegt einen Arbeitsablauf in
-Schritte. DocuPilot nimmt diesen Ablauf auf und findet die Schritte selbst:
-dort, wo die Person ein Teilziel abschließt und das nächste beginnt.
+Anyone who writes a manual for a piece of software breaks a workflow into
+steps. DocuPilot records that workflow and finds the steps by itself: where
+the person completes one sub-goal and begins the next.
 
-Dafür werten drei unabhängige **Modalitäten** dieselbe Aufnahme aus:
+To do so, three independent **modalities** analyse the same recording:
 
-| | Modalität | Was sie sieht |
+| | Modality | What it sees |
 |:-:|---|---|
-| 🖥️ | **Video** | Ruhephasen und Änderungen des Bildschirms; ein Bildmodell beurteilt, ob eine Änderung ein neues Teilziel beginnt |
-| 🎙️ | **Sprache** | Das laut kommentierte Vorgehen, transkribiert mit Whisper; ein Sprachmodell beurteilt jeden Satz im Zusammenhang |
-| ⌨️ | **Ereignisse** | Maus- und Tastatureingaben, gebündelt zu Bursts; lange Pausen deuten auf die Planung eines neuen Schritts |
+| 🖥️ | **Video** | Rest phases and changes of the screen; a vision model judges whether a change begins a new sub-goal |
+| 🎙️ | **Speech** | The procedure as commented aloud, transcribed with Whisper; a language model judges each sentence in context |
+| ⌨️ | **Events** | Mouse and keyboard input, grouped into bursts; long pauses point to the planning of a new step |
 
-Neben der Segmentierung beantwortet DocuPilot die Frage: **Welchen
-Informationsbeitrag leistet jede Modalität – und ab wann bringt eine weitere
-keinen relevanten Gewinn mehr?**
+Beyond the segmentation, DocuPilot answers the question: **What information
+does each modality contribute – and from which point does another one bring
+no relevant gain any more?**
 
-## So funktioniert es
+## How it works
 
 ```mermaid
 flowchart LR
-    R["🎬 Aufnahme – recording.mp4 · events.json"] --> V["🖥️ Video – SSIM · Bildmodell"]
-    R --> A["🎙️ Sprache – Whisper · Sprachmodell"]
-    R --> E["⌨️ Ereignisse – Bursts · Pausen"]
-    V & A & E --> F["🌲 Fusion – Random Forest je Koalition"]
-    G["✍️ Referenzannotation – ground_truth.json"] --> X
-    F --> X["📊 Auswertung – 8 Koalitionen · leave-one-session-out"]
-    X --> B["📈 Bericht – F1 · Shapley · Sättigung"]
+    R["🎬 Recording – recording.mp4 · events.json"] --> V["🖥️ Video – SSIM · vision model"]
+    R --> A["🎙️ Speech – Whisper · language model"]
+    R --> E["⌨️ Events – bursts · pauses"]
+    V & A & E --> F["🌲 Fusion – random forest per coalition"]
+    G["✍️ Reference annotation – ground_truth.json"] --> X
+    F --> X["📊 Evaluation – 8 coalitions · leave-one-session-out"]
+    X --> B["📈 Report – F1 · Shapley · saturation"]
 ```
 
-1. **Aufnehmen** – Bildschirm (10 fps), Mikrofon und jede Eingabe laufen auf
-   einer gemeinsamen Uhr.
-2. **Annotieren** – Im Annotationsfenster werden die Referenzgrenzen gesetzt:
-   am ersten wahrnehmbaren Hinweis auf ein neues Teilziel (nach Kurby & Zacks 2008).
-3. **Segmentieren** – Jede Modalität liefert unabhängig eine Evidenzkurve
-   für Handlungsgrenzen.
-4. **Auswerten** – Alle acht Kombinationen der Modalitäten werden
-   leave-one-session-out gegen die Referenz bewertet; Shapley-Werte zerlegen das
-   Ergebnis in die Beiträge der Modalitäten.
+1. **Record** – screen (10 fps), microphone and every input run on one shared
+   clock.
+2. **Annotate** – the reference boundaries are set in the annotation window:
+   at the first perceivable hint of a new sub-goal (after Kurby & Zacks 2008).
+3. **Segment** – each modality independently yields an evidence curve for
+   action boundaries.
+4. **Evaluate** – all eight combinations of the modalities are scored
+   leave-one-session-out against the reference; Shapley values break the
+   result down into the contributions of the modalities.
 
 ## Highlights
 
-- 🧩 **Strikt unabhängige Modalitäten** – kein Detektor liest die Daten eines
-  anderen, damit die Beiträge sauber zurechenbar bleiben.
-- 🔒 **Kein Informationsleck** – jeder datengetriebene Parameter wird je Fold
-  nur auf den Trainingssessions bestimmt.
-- 📐 **Begründete Statistik** – 95-%-Konfidenzintervalle über Sessions, eine
-  SESOI von einer Grenze, exakte Shapley-Werte aus dem vollfaktoriellen Design.
-- 💾 **Reproduzierbar** – jedes Modellurteil wird neben der Aufnahme gecacht; ein
-  zweiter Lauf kostet keine Modellaufrufe.
-- 📄 **Bericht in Fenster und PDF** – dieselben Abbildungen aus denselben
-  Zahlen.
+- 🧩 **Strictly independent modalities** – no detector reads another one's
+  data, so the contributions stay cleanly attributable.
+- 🔒 **No information leak** – every data-driven parameter is determined per
+  fold on the training sessions only.
+- 📐 **Justified statistics** – 95 % confidence intervals over sessions, a
+  SESOI of one boundary, exact Shapley values from the full factorial design.
+- 💾 **Reproducible** – every model judgement is cached next to the recording;
+  a second run costs no model calls.
+- 📄 **Report in window and PDF** – the same figures from the same
+  numbers.
 
-## Schnellstart
+## Quick start
 
-**Voraussetzungen:** Python 3.13 oder 3.14 · [Poetry](https://python-poetry.org/)
-· `ffmpeg`/`ffprobe` im `PATH` · Zugang zur Anthropic-API (nur für die
-Segmentierung)
+**Prerequisites:** [uv](https://docs.astral.sh/uv/) (also installs Python 3.14
+if needed) · `ffmpeg`/`ffprobe` on the `PATH` · access to the Anthropic API (only
+for the segmentation)
 
 ```bash
 git clone https://github.com/mueller-marcel/docu-pilot.git
 cd docu-pilot
-poetry install
-poetry run docupilot
+uv sync
+uv run docupilot
 ```
 
-Zugangsdaten liest DocuPilot aus der Umgebung oder aus einer `.env` im
-Projektverzeichnis:
+DocuPilot reads credentials from the environment or from a `.env` in the
+project directory:
 
 ```ini
 ANTHROPIC_API_KEY=...
-# optional – dasselbe Modell für Sprache und Bild
+# optional – the same model for speech and vision
 DOCUPILOT_MODEL=claude-sonnet-5
 ```
 
-## Projektstruktur
+## Project structure
 
 ```text
 src/docupilot/
-├── recording/      Aufnahme: ffmpeg, Eingabeprotokoll, Session, Referenzannotation
-├── segmentation/   eine Evidenzkurve je Modalität: video · audio · events
-├── evaluation/     Experiment, Fusion, Kalibrierung, Metriken, Statistik, Bericht
-├── ui/             PySide6-Fenster, Diagramme, PDF-Export
-└── config.py       jede Einstellung mit ihrer Herkunft
-tests/              Tests der Rechenwege hinter den Ergebnissen
-docs/               technische Dokumentation (Sphinx)
+├── recording/      recording: ffmpeg, input log, session, reference annotation
+├── segmentation/   one evidence curve per modality: video · audio · events
+├── evaluation/     experiment, fusion, calibration, metrics, statistics, report
+├── ui/             PySide6 windows, charts, PDF export
+└── config.py       every setting with its provenance
+tests/              tests of the computations behind the results
+docs/               technical documentation (Sphinx)
 ```
 
-## Dokumentation
+## Documentation
 
-Die technische Dokumentation – Architektur, Konzepte, Datenformate,
-Konfiguration und API-Referenz – liegt in [`docs/`](docs/) und wird mit Sphinx
-gebaut:
+The technical documentation – architecture, concepts, data formats,
+configuration and API reference – lives in [`docs/`](docs/) and is built with
+Sphinx:
 
 ```bash
-poetry install --with docs
-poetry run sphinx-build -b html docs docs/_build/html
+uv sync --group docs
+uv run sphinx-build -b html docs docs/_build/html
 ```
 
-Danach `docs/_build/html/index.html` öffnen.
+Then open `docs/_build/html/index.html`.
 
-## Entwicklung
+## Development
 
 ```bash
-poetry install --with dev
-poetry run ruff check .     # Lint
-poetry run pytest           # Tests
+uv sync                 # including the dev group
+uv run ruff check .     # lint
+uv run pytest           # tests
 ```
 
-Die CI prüft jeden Pull Request: Lint und Paketbau, Tests und einen
-Dokumentationsbuild, bei dem jede Warnung als Fehler zählt.
+CI checks every pull request: lint and package build, tests and a
+documentation build in which every warning counts as an error.

@@ -6,7 +6,7 @@ decide.
 Everything here reads only the modalities of the coalition it was given. A
 single look at an excluded modality would make the Shapley values measure the
 leak — and "where to look" is information too, which is why the primary
-candidate pool is a neutral grid, identical for every coalition (C2).
+candidate pool is a neutral grid, identical for every coalition.
 """
 
 from __future__ import annotations
@@ -35,20 +35,17 @@ from docupilot.config import (
 from docupilot.evaluation import metrics
 from docupilot.segmentation.evidence import BOUNDARY_THRESHOLD, BoundaryEvidence
 
-# Names of the feature columns one curve contributes, in order. The recipe is
-# the same for every curve: an asymmetric one would move the Shapley values by
-# design effort, not by information. Windows are multiples of τ.
+# The same recipe for every curve: an asymmetric one would move the Shapley
+# values by design effort, not by information.
 FEATURE_NAMES: tuple[str, ...] = (
-    "point",                                   # interpolated score at the candidate
+    "point",
     *(f"max_{k:g}tau" for k in FEATURE_WINDOWS_TAU),
-    "rank",                                    # session-relative rank of max_1tau
+    "rank",
 )
 FEATURES_PER_CURVE = len(FEATURE_NAMES)
 
 Evidence = Mapping[str, BoundaryEvidence]
 
-
-# ── Candidates ────────────────────────────────────────────────────────────────
 
 def grid_candidates(duration_s: float, spacing_s: float) -> np.ndarray:
     """
@@ -77,8 +74,6 @@ def candidate_times(evidence: Evidence, subset: Sequence[str]) -> np.ndarray:
         times.extend(float(ev.times_s[i]) for i in peaks)
     return np.sort(np.asarray(times, dtype=np.float64))
 
-
-# ── Features ──────────────────────────────────────────────────────────────────
 
 def _window_max(times_s: np.ndarray, curve: np.ndarray, cand: np.ndarray, window_s: float) -> np.ndarray:
     """Highest value within ±window_s of each candidate; 0 where the window is empty."""
@@ -131,8 +126,8 @@ class FeatureTable:
 
     times: np.ndarray
     matrix: np.ndarray
-    owners: tuple[str, ...]       # modality of every column
-    names: tuple[str, ...]        # "<modality>.<channel>.<feature>"
+    owners: tuple[str, ...]
+    names: tuple[str, ...]
 
     @classmethod
     def from_blocks(
@@ -155,17 +150,6 @@ class FeatureTable:
         assert all(self.owners[i] in coalition for i in columns)
         return self.matrix[:, columns]
 
-
-def feature_table(
-    cand: np.ndarray, evidence: Evidence, modalities: Sequence[str], tau_s: float
-) -> FeatureTable:
-    """Features of the given modalities at the candidates, blocks in the given order."""
-    return FeatureTable.from_blocks(
-        cand, [(m, *modality_features(evidence[m], cand, tau_s)) for m in modalities]
-    )
-
-
-# ── Labels and decisions ──────────────────────────────────────────────────────
 
 def label_candidates(times: np.ndarray, gt_s: Sequence[float], tol_s: float) -> np.ndarray:
     """
@@ -192,7 +176,7 @@ def suppress(times: np.ndarray, scores: np.ndarray, radius_s: float) -> list[flo
     :return: the surviving timestamps, ascending.
     """
     kept: list[float] = []
-    for i in np.argsort(scores, kind="stable")[::-1]:          # strongest first
+    for i in np.argsort(scores, kind="stable")[::-1]:
         t = float(times[i])
         if all(abs(t - k) > radius_s for k in kept):
             kept.append(t)
@@ -204,7 +188,7 @@ def decide(
 ) -> list[float]:
     """
     The post-processing — identical for choosing the threshold and for the test
-    prediction (C2): p ≥ threshold, then the local maxima of p along time (on
+    prediction: p ≥ threshold, then the local maxima of p along time (on
     the grid, where neighbouring candidates are the same moment), then
     non-maximum suppression within `radius_s`.
 
@@ -224,12 +208,10 @@ def decide(
     return suppress(times[index], proba[index], radius_s)
 
 
-# ── The empty coalition ───────────────────────────────────────────────────────
-
 @dataclass(frozen=True)
 class EmptyBaseline:
     """
-    What can be predicted with no modality at all (C3): boundaries at the mean
+    What can be predicted with no modality at all: boundaries at the mean
     segment length of the training sessions, at fixed distances.
 
     Reads no modality — only the durations and boundary counts of the TRAINING
@@ -250,11 +232,9 @@ class EmptyBaseline:
         return [float(t) for t in np.arange(self.spacing_s, duration_s, self.spacing_s)]
 
 
-# ── Deciders ──────────────────────────────────────────────────────────────────
-
 class RuleFuser:
     """
-    The untrained baseline A0 (C7): the maximum of the coalition's score curves,
+    The untrained baseline A0: the maximum of the coalition's score curves,
     its peaks of at least 0.5, at least NMS_S apart — the NMS radius of the
     trained deciders. No training, no threshold.
 
@@ -345,18 +325,16 @@ class Fuser:
                                    random_state=self._seed),
             ).fit(features, labels)
         else:
-            raise ValueError(f"Unbekannter Entscheider {self.kind!r}")
+            raise ValueError(f"Unknown decider {self.kind!r}")
         return self
 
     def predict_proba(self, features: np.ndarray) -> np.ndarray:
         if self._model is None:
-            raise RuntimeError("predict_proba() vor fit() aufgerufen")
+            raise RuntimeError("predict_proba() called before fit()")
         if len(features) == 0:
             return np.zeros(0, dtype=np.float64)
         return self._model.predict_proba(features)[:, 1]
 
-
-# ── Threshold ─────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class Prepared:
@@ -404,7 +382,7 @@ def choose_threshold(
 ) -> float:
     """
     The decision threshold of one (outer fold, coalition), chosen by an INNER
-    GroupKFold over the training sessions (C4).
+    GroupKFold over the training sessions.
 
     Every probability the threshold is chosen on comes from a model that did
     not see that session. Out-of-bag votes would not do: a candidate's temporal
@@ -437,8 +415,8 @@ def choose_threshold(
 
 def tree_count(sessions: Sequence[Prepared], seed: int = 0) -> tuple[int, list[float]]:
     """
-    The number of trees after which the forest's error has settled (MA 3.3.1,
-    Hastie et al. 2009, p. 593): high with few trees, then falling; once it
+    The number of trees after which the forest's error has settled
+    (Hastie et al. 2009, p. 593): high with few trees, then falling; once it
     stays flat there are enough. Grown with warm start, so the whole search
     costs about one forest of the final size.
 

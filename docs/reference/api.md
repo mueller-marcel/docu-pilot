@@ -1,16 +1,16 @@
-# API-Referenz
+# API reference
 
-Die Referenz wird bei jedem Build aus den Docstrings im Quellcode erzeugt
-(sphinx-autoapi). Die Docstrings sind auf Englisch, wie der Code.
+The reference is generated from the docstrings in the source code on every build
+(sphinx-autoapi). The docstrings are in English, like the code.
 
-Einstiegspunkte nach Aufgabe:
+Entry points by task:
 
-| Aufgabe | Einstieg |
+| Task | Entry point |
 |---|---|
-| Eine Session segmentieren | {py:func}`docupilot.segmentation.pipeline.segment` |
-| Einen Korpus auswerten | {py:func}`docupilot.evaluation.experiment.load`, {py:func}`~docupilot.evaluation.experiment.run`, {py:func}`docupilot.evaluation.report.analyse` |
-| Grenzen gegen die Referenz bewerten | {py:func}`docupilot.evaluation.metrics.match` |
-| Einstellungen eines Laufs | {py:class}`docupilot.config.Settings` |
+| Segment a session | {py:func}`docupilot.segmentation.pipeline.segment` |
+| Evaluate a corpus | {py:func}`docupilot.evaluation.experiment.load`, {py:func}`~docupilot.evaluation.experiment.run`, {py:func}`docupilot.evaluation.report.analyse` |
+| Score boundaries against the reference | {py:func}`docupilot.evaluation.metrics.match` |
+| Settings of a run | {py:class}`docupilot.config.Settings` |
 
 ```{toctree}
 :maxdepth: 3

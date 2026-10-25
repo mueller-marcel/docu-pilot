@@ -20,11 +20,11 @@ class ReportCharts:
     """The figures of a report, as widgets; field names are the
     `report.Section.chart` names."""
 
-    singles: BarChartWidget            # TF1, Abb. 4.2
-    subsets: BarChartWidget            # TF2, Abb. 4.3
-    shapley: BarChartWidget            # TF2, Abb. 4.4
-    saturation: SaturationChartWidget  # TF3, Abb. 4.5
-    steps: BarChartWidget              # TF3, Abb. 4.6
+    singles: BarChartWidget
+    subsets: BarChartWidget
+    shapley: BarChartWidget
+    saturation: SaturationChartWidget
+    steps: BarChartWidget
 
     @classmethod
     def create(cls) -> ReportCharts:
@@ -41,12 +41,12 @@ class ReportCharts:
 
 def apply_report(charts: ReportCharts, report: rep.Report) -> None:
     """Push a report's numbers into the given chart widgets."""
-    charts.singles.set_values(rep.single_bars(report), axis_title="F1-Wert")
-    charts.subsets.set_values(rep.subset_bars(report), axis_title="F1-Wert")
+    charts.singles.set_values(rep.single_bars(report), axis_title="F1 score")
+    charts.subsets.set_values(rep.subset_bars(report), axis_title="F1 score")
     charts.shapley.set_values(rep.shapley_bars(report),
-                              axis_title="Shapley-Wert (Zugewinn im F1-Wert)")
+                              axis_title="Shapley value (gain in F1 score)")
     charts.saturation.set_values(report.curve)
-    charts.steps.set_values(rep.step_bars(report), axis_title="Zugewinn Δ(k) im F1-Wert",
+    charts.steps.set_values(rep.step_bars(report), axis_title="Gain Δ(k) in F1 score",
                             band=report.sesoi)
 
 

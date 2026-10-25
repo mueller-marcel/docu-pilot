@@ -1,16 +1,16 @@
-# Architekturüberblick
+# Architecture overview
 
-DocuPilot ist eine Desktop-Anwendung (PySide6) mit einer Rechen-Pipeline, die
-vollständig ohne Oberfläche läuft. Das Paket `docupilot` gliedert sich in vier
-Teilpakete und eine zentrale Konfiguration:
+DocuPilot is a desktop application (PySide6) with a computation pipeline that
+runs entirely without a user interface. The package `docupilot` is divided into
+four subpackages and a central configuration:
 
-| Paket | Aufgabe | Abhängig von |
+| Package | Purpose | Depends on |
 |---|---|---|
-| {py:mod}`docupilot.recording` | Aufnahme von Bildschirm, Mikrofon und Eingaben; Session-Verzeichnis und Referenzannotation | – |
-| {py:mod}`docupilot.segmentation` | je Modalität eine Evidenzkurve für Handlungsgrenzen | `recording`, `config` |
-| {py:mod}`docupilot.evaluation` | Experiment über einen Korpus: Fusion, Kalibrierung, Metriken, Statistik, Bericht | `segmentation`, `recording`, `config` |
-| {py:mod}`docupilot.ui` | Fenster, Dialoge und Diagramme | alle anderen |
-| {py:mod}`docupilot.config` | jede Einstellung mit ihrer Herkunft | – |
+| {py:mod}`docupilot.recording` | Recording of screen, microphone and input; session directory and reference annotation | – |
+| {py:mod}`docupilot.segmentation` | one evidence curve for action boundaries per modality | `recording`, `config` |
+| {py:mod}`docupilot.evaluation` | Experiment over a corpus: fusion, calibration, metrics, statistics, report | `segmentation`, `recording`, `config` |
+| {py:mod}`docupilot.ui` | Windows, dialogs and charts | all others |
+| {py:mod}`docupilot.config` | every setting together with its origin | – |
 
 ```{mermaid}
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
         MW[MainWindow] --> AW[AnnotationWindow]
         MW --> EW[ExperimentWindow]
         AW --> FD[FeatureDialog]
-        EW --> RV[report_view · Diagramme · PDF]
+        EW --> RV[report_view · charts · PDF]
     end
     subgraph recording
         RS[RecorderService] --> AV[AvRecorder · ffmpeg]
@@ -47,35 +47,35 @@ flowchart TB
     RV --> REP
 ```
 
-## Leitende Entwurfsentscheidungen
+## Guiding design decisions
 
-**Rechnen ohne Oberfläche.** Alles, was eine Zahl der Auswertung erzeugt, liegt
-in `segmentation` und `evaluation` und importiert kein Qt. Fenster und PDF
-lesen dieselben Berichtsobjekte ({py:mod}`docupilot.evaluation.report`);
-dadurch können Fenster und PDF nicht auseinanderlaufen, und die Ergebnisse
-lassen sich per Skript reproduzieren.
+**Computation without a user interface.** Everything that produces a number of
+the evaluation lives in `segmentation` and `evaluation` and imports no Qt.
+Window and PDF read the same report objects ({py:mod}`docupilot.evaluation.report`);
+as a result, window and PDF cannot diverge, and the results can be reproduced
+by script.
 
-**Unabhängige Modalitäten.** Die Module `video`, `audio` und `events` lesen je
-nur ihre eigene Datei und importieren einander nicht. Jede Querverbindung würde
-in der Shapley-Zerlegung als Beitrag einer Modalität erscheinen, der in
-Wahrheit von einer anderen stammt ({doc}`../concepts/reproducibility`).
+**Independent modalities.** The modules `video`, `audio` and `events` each read
+only their own file and do not import one another. Any cross-connection would
+appear in the Shapley decomposition as a contribution of one modality that in
+truth stems from another ({doc}`../concepts/reproducibility`).
 
-**Zwei Stufen je Modalität.** `extract_raw` erledigt das Teure (Dekodieren,
-Transkribieren, Modellaufrufe) einmal je Session; `render` zeichnet daraus
-billig eine Kurve für die Parameter eines Folds. Kalibrieren kostet so keine
-erneute Extraktion ({doc}`segmentation`).
+**Two stages per modality.** `extract_raw` does the expensive work (decoding,
+transcribing, model calls) once per session; `render` cheaply draws from it a
+curve for the parameters of a fold. Calibration therefore costs no repeated
+extraction ({doc}`segmentation`).
 
-**Keine Information aus der bewerteten Session.** Jeder Parameter, der aus
-Daten bestimmt wird – Schwelle, Audio-Vorlauf, θ und d des Videos, Zahl der
-Bäume – wird je äußerem Fold nur auf den Trainingssessions bestimmt
+**No information from the evaluated session.** Every parameter that is
+determined from data – threshold, audio lead, θ and d of the video, number of
+trees – is determined per outer fold on the training sessions only
 ({doc}`evaluation`).
 
-**Zwischenergebnisse liegen neben der Aufnahme.** Teure Ergebnisse werden im
-Session-Verzeichnis gespeichert, jeweils unter einem Schlüssel, der alles nennt,
-wovon sie abhängen. Ein Schlüssel, der nicht passt, ist ein Fehlschlag, nie
-eine veraltete Antwort ({doc}`../reference/data-formats`).
+**Intermediate results live next to the recording.** Expensive results are
+stored in the session directory, each under a key that names everything they
+depend on. A key that does not match is a miss, never a stale answer
+({doc}`../reference/data-formats`).
 
-## Datenfluss einer Auswertung
+## Data flow of an evaluation
 
 ```{mermaid}
 sequenceDiagram
@@ -83,18 +83,18 @@ sequenceDiagram
     participant X as experiment
     participant P as segmentation.pipeline
     participant R as report
-    W->>X: load(Korpus)
-    X->>P: extract_raws je Session
-    P-->>X: Rohergebnisse (Video-Scan, Transkript+Urteile, Bursts)
+    W->>X: load(corpus)
+    X->>P: extract_raws per session
+    P-->>X: raw results (video scan, transcript+judgements, bursts)
     W->>X: measure_sesoi
     W->>X: run
-    loop jede Session als Testsession
-        X->>X: calibrate (Trainingssessions)
-        X->>P: render (Fold-Parameter)
-        X->>X: Merkmale · Wald · Schwelle · NMS
-        X->>X: match gegen Referenz (±τ)
+    loop each session as test session
+        X->>X: calibrate (training sessions)
+        X->>P: render (fold parameters)
+        X->>X: features · forest · threshold · NMS
+        X->>X: match against reference (±τ)
     end
-    X-->>W: Ergebnistabelle
+    X-->>W: results table
     W->>R: analyse
-    R-->>W: Abbildungen 4.2–4.6
+    R-->>W: figures
 ```

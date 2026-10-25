@@ -15,7 +15,7 @@ from math import factorial
 
 import numpy as np
 
-# One subset's score. frozenset keys because a coalition has no order.
+# frozenset keys because a coalition has no order.
 Values = Mapping[frozenset[str], float]
 
 

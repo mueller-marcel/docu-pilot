@@ -1,91 +1,91 @@
-# Segmentierungs-Pipeline
+# Segmentation pipeline
 
-Modul: {py:mod}`docupilot.segmentation`.
+Module: {py:mod}`docupilot.segmentation`.
 
-Die Segmentierung beantwortet für eine Aufnahme und je Modalität die Frage
-„Wo liegen Handlungsgrenzen?“ – nicht mit einer Liste von Zeitpunkten, sondern
-mit einer **Evidenzkurve**: einem Wert zwischen 0 und 1 für jeden Zeitpunkt
-({doc}`../concepts/evidence-curves`). Erst die Fusion in der Auswertung
-entscheidet, wo tatsächlich Grenzen gesetzt werden.
+For one recording and per modality, segmentation answers the question
+"Where are the action boundaries?" – not with a list of points in time, but
+with an **evidence curve**: a value between 0 and 1 for every point in time
+({doc}`../concepts/evidence-curves`). Only the fusion in the evaluation
+decides where boundaries are actually placed.
 
-## Vertrag einer Modalität
+## Contract of a modality
 
-Jede Modalität ist ein Modul mit denselben vier Namen:
+Each modality is a module with the same four names:
 
 `MODALITY`
-: Name der Modalität (`"video"`, `"audio"`, `"events"`).
+: Name of the modality (`"video"`, `"audio"`, `"events"`).
 
 `raw_key(settings) -> str`
-: Alles, wovon das Rohergebnis abhängt, außer der Aufnahme selbst – etwa
-  Modell, Prompt-Version, Messkonstanten. Bestimmt, ob ein gespeichertes
-  Rohergebnis wiederverwendet werden darf.
+: Everything the raw result depends on, apart from the recording itself – such as
+  model, prompt version, measurement constants. Determines whether a stored
+  raw result may be reused.
 
 `extract_raw(session, settings, *, use_cache, on_progress, is_cancelled)`
-: Die teure Stufe: dekodieren, transkribieren, Modelle befragen. Unabhängig
-  von jedem Fold-Parameter, deshalb einmal je Session.
+: The expensive stage: decoding, transcribing, querying models. Independent
+  of every fold parameter, hence once per session.
 
 `render(raw, settings, params) -> BoundaryEvidence`
-: Die billige Stufe: zeichnet aus dem Rohergebnis die Kurve für die
-  Parameter eines Folds (z. B. den Audio-Vorlauf). Beim Video entscheiden θ und
-  d, welche Bildschirmänderungen existieren; die zugehörigen Modellurteile
-  werden deshalb hier eingeholt – einmal je Bildpaar, danach aus dem Cache.
+: The cheap stage: draws from the raw result the curve for the
+  parameters of a fold (e.g. the audio lead). For video, θ and
+  d decide which screen changes exist; the corresponding model judgements
+  are therefore obtained here – once per frame pair, thereafter from the cache.
 
-Eine vierte Modalität bräuchte nur ein Modul mit diesen Namen und einen Eintrag
-in `_EXTRACTORS` in {py:mod}`docupilot.segmentation.pipeline`; kein Aufrufer
-müsste sich ändern.
+A fourth modality would need only a module with these names and an entry
+in `_EXTRACTORS` in {py:mod}`docupilot.segmentation.pipeline`; no caller
+would have to change.
 
-## Ergebnis: `BoundaryEvidence`
+## Result: `BoundaryEvidence`
 
-{py:class}`~docupilot.segmentation.evidence.BoundaryEvidence` enthält
+{py:class}`~docupilot.segmentation.evidence.BoundaryEvidence` contains
 
-- `times_s` – das Abtastraster mit 50 Hz (`GRID_HZ`),
-- `score` – die Evidenzkurve in [0, 1],
-- `boundaries_s` – die Grenzen, die die Modalität allein setzen würde
-  (Kurve ≥ 0,5; nur zur Anzeige und für den Regel-Entscheider),
-- `channels` – optionale Teilkurven derselben Modalität. Die Fusion liest sie
-  als getrennte Merkmalsblöcke; für die Shapley-Zerlegung bleiben sie **eine**
-  Modalität.
+- `times_s` – the sampling grid at 50 Hz (`GRID_HZ`),
+- `score` – the evidence curve in [0, 1],
+- `boundaries_s` – the boundaries the modality would place on its own
+  (curve ≥ 0.5; only for display and for the rule decider),
+- `channels` – optional sub-curves of the same modality. The fusion reads them
+  as separate feature blocks; for the Shapley decomposition they remain **one**
+  modality.
 
-## Ablauf
+## Procedure
 
 ```{mermaid}
 flowchart LR
-    S[RecordingSession] --> X1[events.extract_raw<br/>Bursts aus events.json]
-    S --> X2[video.extract_raw<br/>SSIM-Scan]
+    S[RecordingSession] --> X1[events.extract_raw<br/>bursts from events.json]
+    S --> X2[video.extract_raw<br/>SSIM scan]
     S --> X3[audio.extract_raw<br/>Whisper · spaCy · LLM]
     X1 --> R1[events.render]
-    X2 --> R2[video.render<br/>Änderungen unter θ, d · VLM]
-    X3 --> R3[audio.render<br/>Glocke je Satz]
-    R1 & R2 & R3 --> B[BoundaryEvidence je Modalität]
+    X2 --> R2[video.render<br/>changes under θ, d · VLM]
+    X3 --> R3[audio.render<br/>bell per sentence]
+    R1 & R2 & R3 --> B[BoundaryEvidence per modality]
 ```
 
-{py:func}`~docupilot.segmentation.pipeline.extract_raws` führt die Extraktion
-in der Reihenfolge Ereignisse → Video → Audio aus, also vom billigsten zum
-teuersten; scheitert eine Modalität, laufen die anderen weiter und der Fehler
-wird gemeldet. {py:func}`~docupilot.segmentation.pipeline.segment` zeichnet
-für den Merkmalsdialog alle drei Kurven mit Standardparametern und speichert
-sie als „Lane“ in der Session.
+{py:func}`~docupilot.segmentation.pipeline.extract_raws` performs the extraction
+in the order events → video → audio, i.e. from the cheapest to the most
+expensive; if one modality fails, the others continue and the error
+is reported. {py:func}`~docupilot.segmentation.pipeline.segment` draws
+all three curves with default parameters for the feature dialog and stores
+them as a "lane" in the session.
 
-## Zwischenspeicher
+## Cache
 
-{py:mod}`docupilot.segmentation.store` hält zwei Schichten:
+{py:mod}`docupilot.segmentation.store` maintains two layers:
 
-| Schicht | Datei | Inhalt |
+| Layer | File | Content |
 |---|---|---|
-| Rohergebnis | `audio_raw.json`, `video_ssim.npz` | Transkript mit Satzurteilen; SSIM-Scan des Videos |
-| Lane | `<modalität>_evidence.npz` | eine gezeichnete Kurve, nur für die Anzeige |
-| Urteils-Cache | `gui_vlm_cache.json`, `audio_llm_cache.json` | jedes Modellurteil, geschlüsselt über die Frage selbst |
+| Raw result | `audio_raw.json`, `video_ssim.npz` | Transcript with sentence judgements; SSIM scan of the video |
+| Lane | `<modality>_evidence.npz` | one drawn curve, for display only |
+| Judgement cache | `gui_vlm_cache.json`, `audio_llm_cache.json` | every model judgement, keyed by the question itself |
 
-Jeder Eintrag trägt einen Schlüssel aus allem, wovon er abhängt. Ändert sich
-etwa die Prompt-Version, passt der Schlüssel nicht mehr, und der Eintrag wird
-neu berechnet. Schreibvorgänge sind atomar: Ein abgebrochener Lauf hinterlässt
-nie eine halbe Datei. Die Auswertung liest die Lanes nicht; sie zeichnet die
-Kurven je Fold selbst.
+Every entry carries a key made of everything it depends on. If, for instance,
+the prompt version changes, the key no longer matches and the entry is
+recomputed. Writes are atomic: an aborted run never leaves
+a half-written file behind. The evaluation does not read the lanes; it draws the
+curves per fold itself.
 
-## Modellzugang
+## Model access
 
-{py:mod}`docupilot.segmentation.backend` lädt `.env`, hält den einen
-Anthropic-Client und die gemeinsame Teilziel-Definition beider Prompts. Es
-transportiert keine Daten zwischen den Modalitäten – Audio und Video teilen sich
-Modell, Definition und Cache-Format, nie Evidenz. Prompts und Versionen:
+{py:mod}`docupilot.segmentation.backend` loads `.env`, holds the single
+Anthropic client and the shared sub-goal definition of both prompts. It
+transports no data between the modalities – audio and video share
+model, definition and cache format, never evidence. Prompts and versions:
 {doc}`../reference/model-prompts`.

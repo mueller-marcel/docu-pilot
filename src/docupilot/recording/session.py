@@ -40,10 +40,6 @@ _INPUT_EVENT_TYPES = frozenset(
     {"mouse_click", "key_press", "key_release", "mouse_scroll"}
 )
 
-# The two boundary definitions a session can be annotated with. "begin" is the
-# guideline's definition and the primary one: the first observable action of
-# the next step. "end" (the action's result has settled on screen) is kept only
-# for the sensitivity run.
 BOUNDARY_DEFINITIONS: tuple[str, ...] = ("begin", "end")
 DEFAULT_DEFINITION = "begin"
 
@@ -99,8 +95,6 @@ class RecordingSession:
     )
     session_dir: Path = field(init=False)
 
-    # Ground truth is optional: the list stays empty until a boundary is set or a
-    # ground_truth.json is loaded.
     ground_truth_data: list[dict[str, Any]] = field(
         default_factory=list, init=False, repr=False
     )
@@ -124,19 +118,17 @@ class RecordingSession:
 
         if not session.recording_path.exists():
             raise FileNotFoundError(
-                f"Keine Aufnahmedatei gefunden:\n{session.recording_path}\n\n"
-                "Bitte wähle ein Verzeichnis, das eine 'recording.mp4' enthält."
+                f"No recording file found:\n{session.recording_path}\n\n"
+                "Please choose a directory that contains a 'recording.mp4'."
             )
         if not session.events_path.exists():
             raise FileNotFoundError(
-                f"Keine Event-Datei gefunden:\n{session.events_path}\n\n"
-                "Bitte wähle ein Verzeichnis, das eine 'events.json' enthält."
+                f"No event file found:\n{session.events_path}\n\n"
+                "Please choose a directory that contains an 'events.json'."
             )
 
         session.load_ground_truth()
         return session
-
-    # ── Event log ────────────────────────────────────────────────────────
 
     def read_events(self) -> list[dict[str, Any]]:
         """
@@ -170,8 +162,6 @@ class RecordingSession:
         """
         return self.input_events_of(self.read_events())
 
-    # ── Ground truth ─────────────────────────────────────────────────────
-
     def load_ground_truth(self) -> None:
         """
         (Re)load ground_truth.json when present. Idempotent; a missing or
@@ -199,34 +189,30 @@ class RecordingSession:
         label: str | None = None,
         definition: str = DEFAULT_DEFINITION,
         run: int = 1,
-        guideline_version: str = "",
     ) -> None:
         """
         Append one boundary and save at once. Keeps the entry schema
-        (t_ms, label, definition, run, annotated_at, guideline_version) in one
-        place.
+        (t_ms, label, definition, run, annotated_at) in one place.
 
         :param t_ms: the boundary's time in milliseconds.
         :param label: display name, e.g. a formatted timestamp.
         :param definition: which definition the boundary follows, see
             BOUNDARY_DEFINITIONS.
         :param run: 1 for the annotation, 2, 3, … for blind repetitions of it.
-        :param guideline_version: version of the annotation guideline used.
         :raises ValueError: for an unknown definition or a run below 1.
         """
         if definition not in BOUNDARY_DEFINITIONS:
             raise ValueError(
-                f"Unbekannte Grenzdefinition {definition!r}; erlaubt: {BOUNDARY_DEFINITIONS}"
+                f"Unknown boundary definition {definition!r}; allowed: {BOUNDARY_DEFINITIONS}"
             )
         if run < 1:
-            raise ValueError(f"Lauf muss >= 1 sein, war {run}")
+            raise ValueError(f"Run must be >= 1, was {run}")
         self.ground_truth_data.append({
             "t_ms": t_ms,
-            "label": label or "Grenze",
+            "label": label or "Boundary",
             "definition": definition,
             "run": int(run),
             "annotated_at": datetime.now(timezone.utc).isoformat(),
-            "guideline_version": guideline_version,
         })
         self.save_ground_truth()
 
@@ -281,13 +267,11 @@ class RecordingSession:
         :return: markers in chronological order.
         """
         markers = [
-            (float(entry.get("t_ms", 0.0)), str(entry.get("label", "Grenze")))
+            (float(entry.get("t_ms", 0.0)), str(entry.get("label", "Boundary")))
             for entry in self.ground_truth_data
             if self._selects(entry, definition, run)
         ]
         return sorted(markers, key=lambda m: m[0])
-
-    # ── Clock ────────────────────────────────────────────────────────────
 
     def arm(self, t0_ns: int) -> None:
         """Fix the origin: the wall-clock time of the MP4's first frame."""
@@ -301,8 +285,6 @@ class RecordingSession:
     def session_time_ms(self) -> float:
         """Milliseconds since t0, on the wall clock ffmpeg stamps the frames with."""
         return round((time.time_ns() - self.start_wallclock_ns) / 1_000_000, 3)
-
-    # ── Paths and metadata ───────────────────────────────────────────────
 
     @property
     def recording_path(self) -> Path:

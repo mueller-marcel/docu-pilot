@@ -11,7 +11,7 @@ the annotated boundaries, then attribute the result to the modalities.
     experiment.py      every coalition on every session, leave-one-session-out
     analysis.py        Shapley values, saturation curve
     statistics.py      per-session 95 % intervals, SESOI class rule
-    alignment.py       Whisper against WhisperX sentence starts (C10)
+    alignment.py       Whisper against WhisperX sentence starts
     repeatability.py   how stable the model verdicts are without the cache
     report.py          the finished evaluation and the sentences that state it
 """

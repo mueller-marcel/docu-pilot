@@ -14,17 +14,17 @@ _LABEL_WIDTH = 160
 _VALUE_WIDTH = 170
 _ROW_HEIGHT = 38
 _TOP_PLAIN = 8
-_TOP_BAND = 24          # room for the ±SESOI labels above the plot
-_BOTTOM = 46            # tick labels and axis title
+_TOP_BAND = 24
+_BOTTOM = 46
 _BAND = "#ebebeb"
 
 
 class BarChartWidget(QWidget):
     """
     One horizontal bar per row with its 95 % confidence interval as whisker,
-    against a zero line — the figures of TF1, TF2 and the TF3 gains. With
-    `band`, a grey area marks ±band (the SESOI), labelled above the plot as in
-    the thesis: a whisker that stays inside it is a gain too small to matter.
+    against a zero line — single modalities, combinations, Shapley values and
+    gains. With `band`, a grey area marks ±band (the SESOI), labelled above the
+    plot: a whisker that stays inside it is a gain too small to matter.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -89,7 +89,6 @@ class BarChartWidget(QWidget):
                 painter.drawText(QRectF(x_of(edge) - 40, 2, 80, 18),
                                  int(Qt.AlignmentFlag.AlignHCenter), label)
 
-        # Axes with ticks and title, then the zero line.
         painter.setPen(QPen(QColor(AXIS), 1))
         painter.drawLine(plot_left, plot_bottom, plot_right, plot_bottom)
         painter.drawLine(plot_left, plot_top, plot_left, plot_bottom)

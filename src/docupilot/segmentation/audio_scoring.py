@@ -17,31 +17,20 @@ import numpy as np
 
 from docupilot.segmentation import backend
 
-# Shared with the video judge (DOCUPILOT_MODEL) — see backend.MODEL.
 MODEL = backend.MODEL
 
 # Bump when the prompt or the score mapping changes — invalidates cached verdicts.
-# a3: judged against the guideline's boundary, the first hint of a NEW sub-goal
-#     (backend.SUBGOAL_DEFINITION, as the video judge); a2 asked for the
-#     completion of an operation with a persistent result, so an announced
-#     menu opening was MEANS where the guideline sets the boundary.
-# a2: dropped the example sentences; a1's were lifted from the session under
-#     evaluation, so its verdicts prove nothing about generalisation.
-# a4: asks whether the sub-goal CHANGES, a sub-goal being one operation of the
-#     workflow handbook (a3's "group of operations" was coarser than the
-#     annotated steps); the first announced step is a change, not SAME_SUBGOAL.
-# a5: the sub-goal as Kurby & Zacks (2008) define it, as the thesis does.
 PROMPT_VERSION = "a5"
 
 _BOUNDARY = "NEW_SUBGOAL"
 _CATEGORIES = (
-    _BOUNDARY,        # the sub-goal changes: the first step of a different one
-    "SAME_SUBGOAL",   # continues, corrects or finishes the current one
-    "OTHER",          # filler, commentary, verification — announces no step
+    _BOUNDARY,
+    "SAME_SUBGOAL",
+    "OTHER",
 )
 
-# The annotation guideline restated for narration, in the video judge's words,
-# and nothing else. No example sentences on purpose — see PROMPT_VERSION.
+# No example sentences on purpose: examples lifted from a session under
+# evaluation would make its verdicts prove nothing about generalisation.
 _SYSTEM = """\
 You are given the spoken narration of a person working through a task in desktop
 software, transcribed and split into sentences, in order. They were told to say
@@ -108,10 +97,10 @@ _SCHEMA = {
 class Judgement:
     """One verdict on one narrated sentence."""
     category: str
-    p_boundary: float   # graded evidence in [0, 1]
+    p_boundary: float
     reason: str = ""
-    model: str = ""         # which model answered — empty for legacy cache entries
-    retrieved_at: str = ""  # when it answered (UTC, ISO)
+    model: str = ""
+    retrieved_at: str = ""
 
 
 # The one boundary decision rule lives downstream (BOUNDARY_THRESHOLD on
@@ -138,8 +127,8 @@ def ask(sentences: list[str], model: str = MODEL) -> str:
         return ""
     if message.stop_reason == "max_tokens":
         raise RuntimeError(
-            "Antwort von max_tokens abgeschnitten — max_tokens in "
-            "audio_scoring.ask erhöhen."
+            "Response cut off by max_tokens — raise max_tokens in "
+            "audio_scoring.ask."
         )
     return "".join(b.text for b in message.content if b.type == "text")
 
@@ -176,7 +165,7 @@ def parse(raw: str, n: int) -> list[Judgement] | None:
     if not by_index:
         return None
     # A sentence the model skipped gets neutral evidence rather than a guess.
-    return [by_index.get(i, Judgement("OTHER", 0.0, "kein Urteil")) for i in range(n)]
+    return [by_index.get(i, Judgement("OTHER", 0.0, "no judgement")) for i in range(n)]
 
 
 class Cache(backend.JsonVerdictCache):

@@ -1,55 +1,55 @@
-# Evidenzkurven
+# Evidence curves
 
-Jede Modalität beschreibt ihre Hinweise auf Grenzen als Kurve E(t) ∈ [0, 1],
-abgetastet mit 50 Hz ({py:mod}`docupilot.segmentation.evidence`). Eine Kurve
-statt einer Liste von Zeitpunkten hat zwei Vorteile:
+Each modality describes its hints of boundaries as a curve E(t) ∈ [0, 1],
+sampled at 50 Hz ({py:mod}`docupilot.segmentation.evidence`). A curve instead
+of a list of instants has two advantages:
 
-- **Abgestufte Evidenz.** Ein unsicheres Urteil bleibt sichtbar und wird nicht
-  vorzeitig verworfen; die Entscheidung trifft erst die Fusion mit allen
-  Hinweisen.
-- **Gleiche Sprache für alle Modalitäten.** Punkthinweise (Bildschirmänderung,
-  Burst-Beginn) und Intervallhinweise (gesprochener Satz) landen im selben
-  Format.
+- **Graded evidence.** An uncertain judgement remains visible and is not
+  discarded prematurely; the decision is made only by the fusion with all
+  hints.
+- **A common language for all modalities.** Point hints (screen change,
+  burst onset) and interval hints (spoken sentence) end up in the same
+  format.
 
-## Zeitpunkt-Hinweis: Gauß-Glocke
+## Point hint: Gaussian bell
 
-Ein Hinweis zum Zeitpunkt $t_i$ mit Wahrscheinlichkeit $p_i$ wird zu
+A hint at instant $t_i$ with probability $p_i$ becomes
 
 $$
 g_i(t) = p_i \cdot \exp\!\left(-\frac{(t - t_i)^2}{2\sigma^2}\right),
 \qquad \sigma = \tau / 3,
 $$
 
-abgeschnitten bei $3\sigma = \tau$. Die Glocke ist damit genau so breit wie das
-Toleranzfenster der Auswertung.
+truncated at $3\sigma = \tau$. The bell is thus exactly as wide as the
+tolerance window of the evaluation.
 
-## Intervall-Hinweis: Raised-Cosine
+## Interval hint: raised cosine
 
-Ein Satz kennt nur das Intervall $[L, R]$, in dem eine Grenze liegt. Er wird zu
-einem Fenster, das bei $L$ und $R$ null ist und am Gipfel $c$ den Wert $p$
-erreicht:
+A sentence only knows the interval $[L, R]$ in which a boundary lies. It becomes
+a window that is zero at $L$ and $R$ and reaches the value $p$ at the peak
+$c$:
 
 $$
 w(t) =
 \begin{cases}
 p \cdot \tfrac12\left(1 - \cos\frac{\pi (t - L)}{c - L}\right) & L \le t \le c\\[4pt]
 p \cdot \tfrac12\left(1 + \cos\frac{\pi (t - c)}{R - c}\right) & c < t \le R\\[4pt]
-0 & \text{sonst}
+0 & \text{otherwise}
 \end{cases}
 $$
 
-Bei der Sprache ist $L$ der Satzbeginn, $R$ das Satzende und $c$ der Satzbeginn
-plus der je Fold gemessene Vorlauf.
+For speech, $L$ is the sentence onset, $R$ the sentence end and $c$ the sentence
+onset plus the lead measured per fold.
 
-## Mehrere Hinweise
+## Multiple hints
 
-Mehrere Glocken oder Fenster werden **punktweise maximal** zusammengeführt, nicht
-addiert. Eine Modalität, die oft meldet, wird dadurch nicht sicherer, als ihr
-stärkstes Einzelurteil ist, und $E(t) \le 1$ gilt per Konstruktion.
+Multiple bells or windows are combined by **pointwise maximum**, not added.
+A modality that reports often therefore does not become more certain than its
+strongest single judgement, and $E(t) \le 1$ holds by construction.
 
-## Teilkurven
+## Sub-curves
 
-Misst eine Modalität mehrere Dinge – Sprache: `judged` und `announced`;
-Ereignisse: `rest`, `completion`, `class_change` –, liegen sie als getrennte
-Teilkurven vor. Die Fusion liest jede als eigenen Merkmalsblock; die
-Shapley-Zerlegung behandelt sie trotzdem als **eine** Modalität.
+If a modality measures several things – speech: `judged` and `announced`;
+events: `rest`, `completion`, `class_change` –, they are kept as separate
+sub-curves. The fusion reads each as its own feature block; the Shapley
+decomposition nevertheless treats them as **one** modality.

@@ -21,7 +21,7 @@ _MARGIN_BOTTOM = 48
 
 class SaturationChartWidget(QWidget):
     """
-    The saturation curve (TF3, Abb. 4.5): mean F1 of all combinations with k
+    The saturation curve: mean F1 of all combinations with k
     modalities against k = 0 … n, with the gain from one point to the next
     written between them — the shape and the step sizes in one picture.
     """
@@ -84,16 +84,15 @@ class SaturationChartWidget(QWidget):
         painter.translate(14, (top + bottom) / 2)
         painter.rotate(-90)
         painter.drawText(QRectF(-80, -9, 160, 18), int(Qt.AlignmentFlag.AlignHCenter),
-                         "mittlerer F1-Wert")
+                         "mean F1 score")
         painter.restore()
         painter.drawText(QRectF(left, bottom + 26, right - left, 18),
-                         int(Qt.AlignmentFlag.AlignHCenter), "Anzahl Modalitäten")
+                         int(Qt.AlignmentFlag.AlignHCenter), "Number of modalities")
 
         painter.setPen(QPen(QColor(_LINE), 2))
         for previous, current in zip(counts, counts[1:]):
             painter.drawLine(point_of(previous), point_of(current))
 
-        # The gain of each step, written beside the middle of its segment.
         painter.setFont(tiny)
         painter.setPen(QColor(_GAIN))
         for previous, current in zip(counts, counts[1:]):

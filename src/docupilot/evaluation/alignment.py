@@ -1,5 +1,5 @@
 """
-The sentence-start comparison of the two ASR alignments (C10): Whisper
+The sentence-start comparison of the two ASR alignments: Whisper
 cross-attention against WhisperX forced alignment.
 """
 
@@ -55,7 +55,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     from docupilot.evaluation import corpus
 
-    parser = argparse.ArgumentParser(description="Satzstarts Whisper gegen WhisperX (C10)")
+    parser = argparse.ArgumentParser(description="Sentence starts: Whisper against WhisperX")
     parser.add_argument("corpus", type=Path)
     args = parser.parse_args(argv)
     for name, d in alignment_report(corpus.scan(args.corpus).usable).items():

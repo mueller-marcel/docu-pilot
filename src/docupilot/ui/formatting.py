@@ -4,6 +4,14 @@ from __future__ import annotations
 
 _BYTE_UNITS = ("B", "KB", "MB", "GB", "TB")
 
+RUN_NAMES: dict[int, str] = {1: "Reference annotation", 2: "Repeat annotation"}
+
+
+def run_name(run: int) -> str:
+    """The display name of an annotation run; runs beyond the named ones, which
+    older ground_truth.json files may hold, keep their number."""
+    return RUN_NAMES.get(run, f"Run {run}")
+
 
 def format_ms(ms: float) -> str:
     """Milliseconds as mm:ss.mmm — the one timestamp format the UI shows."""

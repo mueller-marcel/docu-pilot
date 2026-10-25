@@ -51,7 +51,7 @@ class AvRecorder:
         deadline = time.monotonic() + 5.0
         while not self._session.is_armed:
             if time.monotonic() > deadline:
-                raise RuntimeError("AvRecorder: ffmpeg hat keinen Frame angenommen")
+                raise RuntimeError("AvRecorder: ffmpeg did not accept a frame")
             time.sleep(0.001)
 
         self._writer.write(
@@ -143,7 +143,6 @@ class AvRecorder:
 
         return [
             "ffmpeg", "-loglevel", "warning", "-y",
-            # Each piped frame gets ffmpeg's wall clock as its timestamp (VFR).
             "-f", "rawvideo",
             "-vcodec", "rawvideo",
             "-pix_fmt", "bgr24",

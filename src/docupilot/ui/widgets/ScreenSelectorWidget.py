@@ -19,7 +19,7 @@ class ScreenSelectorWidget(DeviceSelectorWidget):
         """
 
         super().__init__(
-            title="Bildschirm auswählen",
+            title="Choose screen",
             load_devices=lambda: QApplication.screens(),
             tile_factory=lambda screen: ScreenTileWidget(screen),
             selected_attr_name="screen",

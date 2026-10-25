@@ -1,62 +1,59 @@
-# Fusion und Entscheidung
+# Fusion and decision
 
-Die Fusion macht aus den Evidenzkurven einer **Koalition** – einer Teilmenge
-der drei Modalitäten – eine Liste von Grenzen. Sie folgt einer späten Fusion:
-Jede Modalität liefert unabhängig ihre Kurve, kombiniert wird erst auf Ebene
-der Merkmale ({py:mod}`docupilot.evaluation.fusion`).
+The fusion turns the evidence curves of a **coalition** – a subset of the
+three modalities – into a list of boundaries. It follows a late-fusion scheme:
+each modality supplies its curve independently, and combination happens only
+at the level of the features ({py:mod}`docupilot.evaluation.fusion`).
 
-## Vollfaktorielles Design
+## Full factorial design
 
-Mit drei Modalitäten gibt es $2^3 = 8$ Koalitionen einschließlich der leeren.
-Jede wird mit demselben Verfahren, denselben Kandidaten und derselben
-Nachverarbeitung bewertet; sie unterscheiden sich nur darin, welche
-Merkmalsspalten sie lesen dürfen. Nur so sind die Unterschiede zwischen
-Koalitionen Unterschiede der Information und nicht des Verfahrens – und nur
-mit allen acht Werten sind die Shapley-Werte exakt.
+With three modalities there are $2^3 = 8$ coalitions, including the empty one.
+Each is evaluated with the same procedure, the same candidates and the same
+post-processing; they differ only in which feature columns they may read. Only
+then are the differences between coalitions differences of information and not
+of procedure – and only with all eight values are the Shapley values exact.
 
-## Kandidaten und Merkmale
+## Candidates and features
 
-Kandidaten liegen auf einem festen Raster alle τ/5. Für jede Kurve einer
-Modalität werden je Kandidat fünf Merkmale gebildet:
+Candidates lie on a fixed grid every τ/5. For each curve of a modality, five
+features are computed per candidate:
 
-| Merkmal | Bedeutung |
+| Feature | Meaning |
 |---|---|
-| `point` | Kurvenwert am Kandidaten |
-| `max_0.5tau`, `max_1tau`, `max_2tau` | Maximum der Kurve in ±0,5τ, ±τ, ±2τ |
-| `rank` | Rang von `max_1tau` innerhalb der Session (0 … 1) |
+| `point` | Curve value at the candidate |
+| `max_0.5tau`, `max_1tau`, `max_2tau` | Maximum of the curve within ±0.5τ, ±τ, ±2τ |
+| `rank` | Rank of `max_1tau` within the session (0 … 1) |
 
-Die Fenster sind für jede Kurve gleich, damit kein Beitrag vom
-Gestaltungsaufwand für eine einzelne Modalität abhängt. Der Rang macht die
-Merkmale unabhängig vom Niveau einer Session.
+The windows are the same for every curve, so that no contribution depends on
+the design effort spent on a single modality. The rank makes the features
+independent of the level of a session.
 
-## Lernen ohne Informationsleck
+## Learning without information leakage
 
-Ein Random Forest lernt aus den Trainingssessions, welche Merkmalsmuster an
-Referenzgrenzen auftreten. Drei Regeln verhindern, dass Information aus der
-Testsession oder aus benachbarten Kandidaten das Ergebnis schönt:
+A random forest learns from the training sessions which feature patterns occur
+at reference boundaries. Three rules prevent information from the test session
+or from neighbouring candidates from flattering the result:
 
-1. **Leave-one-session-out.** Die Testsession trägt nur ihre Aufnahme bei.
-2. **Gruppiert nach Session.** Benachbarte Rasterkandidaten liegen 0,2 s
-   auseinander und sind fast identisch. Out-of-bag-Schätzungen wären deshalb
-   optimistisch. Schwelle und Baumzahl werden auf ganzen zurückgehaltenen
-   Trainingssessions bestimmt.
-3. **Gleiche Nachverarbeitung.** Die Schwelle wird mit genau der
-   Nachverarbeitung gewählt, mit der später die Testsession bewertet wird.
+1. **Leave-one-session-out.** The test session contributes only its recording.
+2. **Grouped by session.** Neighbouring grid candidates lie 0.2 s apart and are
+   almost identical. Out-of-bag estimates would therefore be optimistic. The
+   threshold and the number of trees are determined on entire held-out
+   training sessions.
+3. **Identical post-processing.** The threshold is chosen with exactly the
+   post-processing with which the test session is later evaluated.
 
-## Von der Wahrscheinlichkeit zur Grenze
+## From probability to boundary
 
-1. Wahrscheinlichkeit ≥ Schwelle der Koalition.
-2. Lokale Maxima entlang der Zeit – benachbarte Rasterpunkte sind derselbe
-   Moment.
-3. Non-Maximum-Suppression mit 2 s Radius: Von zwei Grenzen, die näher
-   beieinander liegen, bleibt die stärkere.
+1. Probability ≥ threshold of the coalition.
+2. Local maxima along time – neighbouring grid points are the same moment.
+3. Non-maximum suppression with a 2 s radius: of two boundaries lying closer
+   together, the stronger one is kept.
 
-Der Radius ist aus der Annotation abgeleitet: Aufeinanderfolgende Schritte
-liegen frühestens etwa 3 s auseinander, also erzeugt ein Teilschritt nie zwei
-Grenzen.
+The radius is derived from the annotation: consecutive steps lie at least
+about 3 s apart, so a single step never produces two boundaries.
 
-## Regel-Entscheider A0
+## Rule decider A0
 
-Als Gegenprobe ohne Training: das Maximum der Kurven der Koalition, Gipfel ab
-0,5, mindestens 2 s auseinander. Er zeigt, ob ein Befund auf den Modalitäten
-beruht oder nur auf dem gelernten Kombinierer (`decider = "rule"`).
+As a cross-check without training: the maximum of the coalition's curves,
+peaks from 0.5, at least 2 s apart. It shows whether a finding rests on the
+modalities or merely on the learned combiner (`decider = "rule"`).

@@ -20,7 +20,7 @@ class MicrophoneSelectorWidget(DeviceSelectorWidget):
         """
 
         super().__init__(
-            title="Mikrofon auswählen",
+            title="Choose microphone",
             load_devices=lambda: QMediaDevices.audioInputs(),
             tile_factory=lambda microphone: MicrophoneTileWidget(microphone),
             selected_attr_name="microphone",

@@ -19,15 +19,10 @@ import numpy as np
 
 from docupilot.segmentation import backend
 
-# Shared with the audio judge (DOCUPILOT_MODEL) — see backend.MODEL.
 MODEL = backend.MODEL
 
 # Bump when the prompt or the score mapping changes — invalidates cached verdicts.
-PROMPT_VERSION = "v11"  # v11: the sub-goal as Kurby & Zacks (2008) define it;
-                        # v10: "does the sub-goal change?", a sub-goal being one
-                        #      operation of the workflow handbook;
-                        # v9: sub-goal change judged on BEFORE|AFTER only;
-                        # v8: the same on START|BEFORE|AFTER|NEXT
+PROMPT_VERSION = "v11"
 
 # ONE composite image, BEFORE left, AFTER right — not cosmetic: sent as two
 # separate images the model swaps them, which is fatal for a before/after question.
@@ -38,9 +33,9 @@ _JPEG_QUALITY = 80
 
 _BOUNDARY = "NEW_SUBGOAL"
 _CATEGORIES = (
-    _BOUNDARY,        # the change is the first step toward a different sub-goal
-    "SAME_SUBGOAL",   # it continues, corrects or finishes the current one
-    "NOT_USER",       # noise, or a change the system made on its own
+    _BOUNDARY,
+    "SAME_SUBGOAL",
+    "NOT_USER",
 )
 
 _SYSTEM = """The image shows two screenshots from a screen recording of one person using
@@ -95,11 +90,11 @@ _USER = ("LEFT = BEFORE, RIGHT = AFTER the screen settled. Does the person's "
 class Judgement:
     """One verdict on one change."""
     category: str
-    p_boundary: float   # graded evidence in [0, 1]
+    p_boundary: float
     reason: str = ""    # the model's own reading — keep it: it is how you
                         # tell "saw nothing, guessed a label" from a real read
-    model: str = ""         # which model answered — empty for legacy cache entries
-    retrieved_at: str = ""  # when it answered (UTC, ISO)
+    model: str = ""
+    retrieved_at: str = ""
 
 
 # The one boundary decision rule lives downstream (BOUNDARY_THRESHOLD on
@@ -120,8 +115,6 @@ _SCHEMA = {
     "additionalProperties": False,
 }
 
-
-# ── Cloud model ───────────────────────────────────────────────────────────────
 
 is_available = backend.is_available
 
@@ -156,13 +149,13 @@ def ask(composite: bytes, model: str = MODEL) -> str:
     )
 
     if message.stop_reason == "refusal":
-        return ""                     # a verdict on this change: no evidence
+        return ""
     if message.stop_reason == "max_tokens":
         # Not a per-change problem — the budget is wrong and every change will
         # hit it. Fail loudly instead of quietly emitting an empty lane.
         raise RuntimeError(
-            "Antwort wurde von max_tokens abgeschnitten — Thinking-Budget zu klein. "
-            "max_tokens in video_scoring.ask erhöhen."
+            "Response was cut off by max_tokens — thinking budget too small. "
+            "Raise max_tokens in video_scoring.ask."
         )
     return "".join(b.text for b in message.content if b.type == "text")
 
@@ -198,8 +191,6 @@ def parse(raw: str) -> Judgement | None:
         reason=f"{data.get('observation', '')} | {data.get('reason', '')}"[:160],
     )
 
-
-# ── Composite image ───────────────────────────────────────────────────────────
 
 def downscale(bgr: np.ndarray) -> np.ndarray:
     """Shrink one frame to PANEL_WIDTH — done once per settled state, then reused."""
@@ -237,11 +228,9 @@ def encode_pair(before: np.ndarray, after: np.ndarray,
 
     ok, buf = cv2.imencode(".jpg", canvas, [int(cv2.IMWRITE_JPEG_QUALITY), _JPEG_QUALITY])
     if not ok:
-        raise RuntimeError("JPEG-Encoding des Frame-Paars fehlgeschlagen")
+        raise RuntimeError("JPEG encoding of the frame pair failed")
     return buf.tobytes()
 
-
-# ── Cache ─────────────────────────────────────────────────────────────────────
 
 class Cache(backend.JsonVerdictCache):
     """

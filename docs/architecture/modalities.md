@@ -1,93 +1,93 @@
-# Die drei Modalitäten
+# The three modalities
 
-Jede Modalität liest genau eine Quelle der Aufnahme und keine Ausgabe einer
-anderen Modalität.
+Each modality reads exactly one source of the recording and no output of
+another modality.
 
-| | Video | Sprache | Ereignisse |
+| | Video | Speech | Events |
 |---|---|---|---|
-| Quelle | Bildspur von `recording.mp4` | Tonspur von `recording.mp4` | `events.json` |
-| Kandidaten | Beginn einer Bildschirmänderung | Satzanfang | Beginn eines Eingabe-Bursts |
-| Semantisches Urteil | Bildmodell (VORHER\|NACHHER) | Sprachmodell (ganze Erzählung) | – |
-| Kurvenform | Gauß-Glocke am Änderungsbeginn | Raised-Cosine über dem Satz | Gauß-Glocke am Burst-Beginn |
-| In-Fold-Parameter | Rauschschwelle θ, Mindestruhe d | Vorlauf Satzbeginn → Grenze | – |
-| Modul | {py:mod}`docupilot.segmentation.video` | {py:mod}`docupilot.segmentation.audio` | {py:mod}`docupilot.segmentation.events` |
+| Source | video track of `recording.mp4` | audio track of `recording.mp4` | `events.json` |
+| Candidates | onset of a screen change | sentence onset | onset of an input burst |
+| Semantic judgement | vision model (BEFORE\|AFTER) | language model (entire narration) | – |
+| Curve shape | Gaussian bell at the change onset | raised cosine over the sentence | Gaussian bell at the burst onset |
+| In-fold parameters | noise threshold θ, minimum rest d | lead sentence onset → boundary | – |
+| Module | {py:mod}`docupilot.segmentation.video` | {py:mod}`docupilot.segmentation.audio` | {py:mod}`docupilot.segmentation.events` |
 
 ## Video
 
-1. **Ähnlichkeitssignal.** Jedes Bild wird auf 896 px Breite verkleinert und in
-   Graustufen umgerechnet. Für jedes Bild wird die SSIM (Wang et al. 2004) zum
-   Vorgänger berechnet, getrennt für 8 × 8 Kacheln; zählt die **kleinste**
-   Kachel. So verschwindet eine kleine Änderung – eine neue Zeile Text – nicht
-   im Mittel über den ganzen Bildschirm, während Kodierrauschen die SSIM kaum
-   bewegt. Die Bildzeiten kommen per `ffprobe` direkt aus dem Container. Der
-   Scan wird als `video_ssim.npz` gespeichert.
-2. **Ruhe und Änderung.** Ein Bild ist ruhig, wenn seine SSIM ≥ θ ist. Eine
-   Folge ruhiger Bilder von mindestens d Sekunden ist eine **Ruhephase**.
-   Zwischen je zwei Ruhephasen liegt eine **Änderung**; ihr Beginn ist das
-   erste bewegte Bild. VORHER und NACHHER sind die Zustandsbilder der beiden
-   Ruhephasen, jeweils 0,2 s nach deren Beginn (damit keine ausblendende
-   Animation beurteilt wird). Auch die erste Änderung einer Aufnahme zählt –
-   sie beginnt das erste Teilziel, und die Annotation markiert diesen Beginn.
-3. **Urteil.** Unterscheiden sich VORHER und NACHHER in keiner Kachel um mehr
-   als einen Grauwert im Mittel, entfällt die Änderung ohne Modellaufruf.
-   Sonst bekommt das Bildmodell beide Bilder als **ein** Kompositbild (links
-   VORHER, rechts NACHHER, rot umrandet der geänderte Bereich) und antwortet mit
-   `NEW_SUBGOAL`, `SAME_SUBGOAL` oder `NOT_USER` samt Konfidenz.
-   P(Grenze) ist die Konfidenz bei `NEW_SUBGOAL`, sonst ihr Komplement. Höchstens
-   400 Aufrufe je Session und (θ, d); ein Erreichen der Grenze wird gemeldet.
-4. **Kurve.** Je Urteil eine Gauß-Glocke der Höhe P(Grenze) am
-   Änderungsbeginn.
+1. **Similarity signal.** Each frame is downscaled to a width of 896 px and
+   converted to greyscale. For each frame, the SSIM (Wang et al. 2004) to its
+   predecessor is computed, separately for 8 × 8 tiles; the **smallest**
+   tile counts. A small change – a new line of text – thus does not vanish
+   in the average over the whole screen, while encoding noise barely moves
+   the SSIM. The frame times are taken directly from the container via `ffprobe`. The
+   scan is stored as `video_ssim.npz`.
+2. **Rest and change.** A frame is at rest if its SSIM is ≥ θ. A
+   sequence of resting frames lasting at least d seconds is a **rest phase**.
+   Between any two rest phases lies a **change**; its onset is the
+   first moving frame. BEFORE and AFTER are the state frames of the two
+   rest phases, each taken 0.2 s after their start (so that no fading
+   animation is judged). The first change of a recording also counts –
+   it begins the first sub-goal, and the annotation marks this beginning.
+3. **Judgement.** If BEFORE and AFTER differ in no tile by more
+   than one grey level on average, the change is dropped without a model call.
+   Otherwise the vision model receives both frames as **one** composite image (left
+   BEFORE, right AFTER, the changed region outlined in red) and answers with
+   `NEW_SUBGOAL`, `SAME_SUBGOAL` or `NOT_USER` together with a confidence.
+   P(boundary) is the confidence for `NEW_SUBGOAL`, otherwise its complement. At most
+   400 calls per session and (θ, d); reaching this limit is reported.
+4. **Curve.** Per judgement, one Gaussian bell of height P(boundary) at the
+   change onset.
 
-θ und d werden je Fold auf den Trainingssessions gewählt: Für jedes Paar aus
-θ ∈ {0,85; 0,9; 0,95; 0,98} und d ∈ {0,5; 1; 1,5; 2; 3} s werden die
-Änderungsbeginne ohne Modellaufruf gegen die Referenz gematcht; das Paar mit dem
-höchsten gepoolten F1-Wert gewinnt ({py:func}`~docupilot.evaluation.calibration.calibrate_video`).
+θ and d are chosen per fold on the training sessions: for each pair from
+θ ∈ {0.85, 0.9, 0.95, 0.98} and d ∈ {0.5, 1, 1.5, 2, 3} s, the
+change onsets are matched against the reference without a model call; the pair with the
+highest pooled F1 score wins ({py:func}`~docupilot.evaluation.calibration.calibrate_video`).
 
 ```{note}
-Jedes Paar (θ, d), das irgendein Fold wählt, wird für alle Sessions beurteilt,
-weil die Trainingssessions dieses Folds ihre Kurven damit brauchen. Wählen die
-Folds verschiedene Paare, steigt die Zahl der Modellaufrufe entsprechend.
+Every pair (θ, d) chosen by any fold is judged for all sessions,
+because the training sessions of that fold need their curves with it. If the
+folds choose different pairs, the number of model calls rises accordingly.
 ```
 
-## Sprache
+## Speech
 
-1. **Transkript.** Whisper (`small`, Deutsch, Temperatur 0 für ein
-   deterministisches Ergebnis) transkribiert die Tonspur mit Wortzeitstempeln.
-   Optional richtet WhisperX die Wörter per Forced Alignment aus
+1. **Transcript.** Whisper (`small`, German, temperature 0 for a
+   deterministic result) transcribes the audio track with word timestamps.
+   Optionally, WhisperX aligns the words via forced alignment
    (`asr_alignment = "whisperx"`).
-2. **Sätze.** spaCy (`de_core_news_lg`) zerlegt das Transkript in Sätze; ein
-   Satz beginnt mit dem Zeitstempel seines ersten Wortes und endet mit dem
-   seines letzten.
-3. **Urteil.** **Ein** Aufruf übergibt dem Sprachmodell alle Sätze der Session
-   nummeriert, damit jeder Satz im Zusammenhang beurteilt wird. Kategorien:
+2. **Sentences.** spaCy (`de_core_news_lg`) splits the transcript into sentences; a
+   sentence begins with the timestamp of its first word and ends with that
+   of its last.
+3. **Judgement.** **One** call passes all sentences of the session to the language model,
+   numbered, so that each sentence is judged in context. Categories:
    `NEW_SUBGOAL`, `SAME_SUBGOAL`, `OTHER`.
-4. **Kurve.** Jeder Satz zeichnet eine Raised-Cosine-Glocke über sein Intervall
-   [Beginn, Ende]. Ihr Gipfel liegt beim **Vorlauf** nach dem Satzbeginn: dem
-   Median des Abstands Satzbeginn → erste Referenzgrenze im Satz, je Fold auf
-   den Trainingssessions gemessen. Zwei Teilkurven:
-   - `judged` – Höhe = P(Grenze) aus dem Modellurteil,
-   - `announced` – Höhe 1 für jeden Satz: Die Teilnehmenden sollten jeden
-     Schritt ankündigen, also ist schon der Satzbeginn ein Hinweis.
+4. **Curve.** Each sentence draws a raised-cosine bell over its interval
+   [begin, end]. Its peak lies at the **lead** after the sentence onset: the
+   median of the distance sentence onset → first reference boundary within the sentence, measured per fold on
+   the training sessions. Two sub-curves:
+   - `judged` – height = P(boundary) from the model judgement,
+   - `announced` – height 1 for every sentence: participants were asked to announce every
+     step, so the sentence onset itself is already a hint.
 
-Sprache weiß das **Intervall**, in dem eine Grenze liegt, nicht den genauen
-Zeitpunkt. Der Vorlauf übersetzt das Intervall in einen erwarteten Zeitpunkt,
-ohne Information aus einer anderen Modalität.
+Speech knows the **interval** in which a boundary lies, not the exact
+point in time. The lead translates the interval into an expected point in time,
+without information from any other modality.
 
-## Ereignisse
+## Events
 
-1. **Klassifizieren.** Jedes Eingabeereignis bekommt eine Klasse aus
-   Aktionstyp und Tastenklasse (Zeichen, Navigation, Abschluss wie Enter oder
-   Strg+S, Abbruch wie Esc oder Strg+Z, Shortcut; Klick, Doppelklick,
-   Rechtsklick, Scrollen). Modifikatortasten und Freigaben sind keine eigene
-   Aktion. Zwei Linksklicks innerhalb von 0,5 s sind ein Doppelklick.
-2. **Bursts.** Eine Pause von mehr als 2 s beginnt einen neuen Burst
-   (Pausenschwelle der Schreibprozessforschung, Wengelin 2006).
-3. **Übergänge.** Am ersten Ereignis jedes Bursts werden drei Teilkurven
-   gezeichnet:
-   - `rest` – Länge der Pause davor, geteilt durch die längste Pause der Session,
-   - `completion` – der vorige Burst endete mit einer Abschluss-Taste ohne
-     folgendes Abbruch-Ereignis,
-   - `class_change` – 1 − Kosinus-Ähnlichkeit der Klassenhistogramme beider Bursts.
+1. **Classification.** Each input event is assigned a class made of
+   action type and key class (character, navigation, completion such as Enter or
+   Ctrl+S, cancellation such as Esc or Ctrl+Z, shortcut; click, double click,
+   right click, scroll). Modifier keys and releases are not an action
+   of their own. Two left clicks within 0.5 s are a double click.
+2. **Bursts.** A pause of more than 2 s starts a new burst
+   (pause threshold of writing-process research, Wengelin 2006).
+3. **Transitions.** At the first event of each burst, three sub-curves are
+   drawn:
+   - `rest` – length of the pause before it, divided by the longest pause of the session,
+   - `completion` – the previous burst ended with a completion key not
+     followed by a cancellation event,
+   - `class_change` – 1 − cosine similarity of the class histograms of both bursts.
 
-Der Primärlauf nutzt nur `rest` (`event_channels = "rest"`); alle drei sind die
-Variante `"all"`. Die Bildschirmposition von Klicks wird nicht ausgewertet.
+The primary run uses only `rest` (`event_channels = "rest"`); all three are the
+variant `"all"`. The screen position of clicks is not evaluated.

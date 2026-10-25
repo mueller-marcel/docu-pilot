@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
     to switch between the recorder page and the annotation page. After a
     recording is stopped, the app navigates to the annotation page for the
     just-finished session. Existing sessions on disk can also be reopened via
-    "Datei > Öffnen".
+    "File > Open".
     """
 
     def __init__(self) -> None:
@@ -115,7 +115,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         page.setStyleSheet("background:#f7f7f7;")
         layout = QVBoxLayout(page)
-        label = QLabel("Aufnahme wird finalisiert\nBitte warten…")
+        label = QLabel("Finalising recording\nPlease wait…")
         label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         label.setStyleSheet("color:#555; font-size:16px; line-height:1.8;")
         layout.addStretch()
@@ -125,27 +125,27 @@ class MainWindow(QMainWindow):
 
     def _setup_menu_bar(self) -> None:
         """
-        Menu bar: "Datei > Öffnen" loads an existing session (recording.mp4 +
-        events.json, optional ground_truth.json) from a directory; "Auswertung"
+        Menu bar: "File > Open" loads an existing session (recording.mp4 +
+        events.json, optional ground_truth.json) from a directory; "Evaluation"
         loads a corpus into the experiment window and deletes its generated
         files. The deletion entries belong to the experiment window and stay
         disabled until a corpus is loaded there.
         """
 
-        file_menu = self.menuBar().addMenu("&Datei")
+        file_menu = self.menuBar().addMenu("&File")
 
-        open_action = QAction("&Öffnen…", self)
+        open_action = QAction("&Open…", self)
         open_action.setShortcut(QKeySequence.StandardKey.Open)
         open_action.triggered.connect(self._on_open_session)
         file_menu.addAction(open_action)
 
-        analysis_menu = self.menuBar().addMenu("&Auswertung")
+        analysis_menu = self.menuBar().addMenu("&Evaluation")
 
-        choose_corpus_action = QAction("&Korpus auswählen…", self)
+        choose_corpus_action = QAction("&Choose corpus…", self)
         choose_corpus_action.triggered.connect(self._on_choose_corpus)
         analysis_menu.addAction(choose_corpus_action)
 
-        experiment_action = QAction("Auswertungsfenster &öffnen…", self)
+        experiment_action = QAction("&Open evaluation window…", self)
         experiment_action.triggered.connect(self._on_open_experiment)
         analysis_menu.addAction(experiment_action)
 
@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
         never launches the pipeline by itself.
         """
         directory = QFileDialog.getExistingDirectory(
-            self, "Korpus-Verzeichnis wählen"
+            self, "Choose corpus directory"
         )
         if not directory:
             return
@@ -272,7 +272,7 @@ class MainWindow(QMainWindow):
         """
 
         directory = QFileDialog.getExistingDirectory(
-            self, "Session-Verzeichnis öffnen"
+            self, "Open session directory"
         )
         if not directory:
             return
@@ -281,7 +281,7 @@ class MainWindow(QMainWindow):
             session = RecordingSession.from_directory(Path(directory))
         except FileNotFoundError as exc:
             self._show_error(
-                title="Session konnte nicht geöffnet werden",
+                title="Session could not be opened",
                 message=str(exc),
             )
             return

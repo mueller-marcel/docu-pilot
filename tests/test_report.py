@@ -1,6 +1,6 @@
 """
 From the result table to the figures: report.analyse turns per-session rows
-into the bars of Abb. 4.2–4.6.
+into the report's bars.
 """
 
 import pytest
@@ -54,7 +54,7 @@ def test_intervals_are_95_percent_t_intervals_over_sessions():
 
 def test_tf1_bars_are_single_modalities_best_first_then_none():
     bars = rep.single_bars(rep.analyse([], result()))
-    assert [b[0] for b in bars] == ["Sprache", "Ereignisse", "Video", rep.BASELINE_NAME]
+    assert [b[0] for b in bars] == ["Speech", "Events", "Video", rep.BASELINE_NAME]
     assert bars[-1][4] == rep.BASELINE
 
 
@@ -67,7 +67,7 @@ def test_tf2_bars_are_all_eight_combinations_with_the_empty_one_last():
 
 def test_tf3_steps_are_classified_against_the_sesoi():
     r = rep.analyse([], result())
-    assert [b[0] for b in rep.step_bars(r)] == ["1. Modalität", "2. Modalität", "3. Modalität"]
+    assert [b[0] for b in rep.step_bars(r)] == ["Modality 1", "Modality 2", "Modality 3"]
     assert r.steps[1].cls(r.sesoi) == st.RELEVANT
     assert r.saturation.k_star in (1, 2, 3)
 

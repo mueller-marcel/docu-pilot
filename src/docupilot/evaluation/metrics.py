@@ -23,7 +23,7 @@ class Match:
     tp: int
     fp: int
     fn: int
-    pairs: list[tuple[float, float]]   # (t_gt, t_pred) of every hit, for inspection
+    pairs: list[tuple[float, float]]
 
     @property
     def precision(self) -> float:
@@ -62,7 +62,7 @@ def match(gt_s: Sequence[float], pred_s: Sequence[float], tau_s: float) -> Match
     :raises ValueError: when the tolerance is not positive.
     """
     if tau_s <= 0:
-        raise ValueError(f"Toleranz muss positiv sein, war {tau_s}")
+        raise ValueError(f"Tolerance must be positive, was {tau_s}")
 
     gt = np.sort(np.asarray(gt_s, dtype=np.float64))
     pred = np.sort(np.asarray(pred_s, dtype=np.float64))

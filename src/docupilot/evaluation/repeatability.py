@@ -1,5 +1,5 @@
 """
-How stable the model verdicts are when they are asked for again (C11).
+How stable the model verdicts are when they are asked for again.
 
 Temperature 0 is not fully deterministic on API models. The verdict caches
 make a run reproducible, but say nothing about whether the SAME question gets
@@ -71,14 +71,6 @@ def _f1(evidence, modality: str, gt: Sequence[float], duration: float, tau: floa
     return metrics.match(gt, predicted, tau).f1
 
 
-def measured_settings(directories: Sequence[Path]) -> Settings:
-    """
-    The default settings; τ is a priori (config.TOLERANCE_S), so the corpus
-    does not change them.
-    """
-    return Settings()
-
-
 def measure(
     directory: Path,
     settings: Settings,
@@ -88,7 +80,7 @@ def measure(
     """
     Judge one session `runs` times per model-judged modality, caches bypassed.
 
-    :param settings: the run's settings (measured_settings).
+    :param settings: the run's settings.
     """
     session = RecordingSession.from_directory(directory)
     duration = dataset.duration_s(session)
@@ -98,7 +90,7 @@ def measure(
 
     video_runs, video_f1, video_models, video_dates = [], [], set(), set()
     for i in range(runs):
-        log(f"  {directory.name}: Video, Lauf {i + 1}/{runs}")
+        log(f"  {directory.name}: video, run {i + 1}/{runs}")
         raw = video.extract_raw(session, settings, reuse_verdicts=False)
         params = FoldParams()
         verdicts = video.judge_changes(raw, params.video_theta, params.video_min_rest_s).verdicts
@@ -113,7 +105,7 @@ def measure(
 
     audio_runs, audio_f1, audio_models, audio_dates = [], [], set(), set()
     for i in range(runs):
-        log(f"  {directory.name}: Audio, Lauf {i + 1}/{runs}")
+        log(f"  {directory.name}: audio, run {i + 1}/{runs}")
         raw = audio.extract_raw(session, settings, reuse_verdicts=False)
         audio_runs.append({k: (s.category, s.p_boundary) for k, s in enumerate(raw.sentences)})
         audio_f1.append(_f1(audio.render(raw, settings), "audio", gt, duration, tau))
@@ -134,21 +126,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     usable = corpus.scan(args.corpus).usable
-    settings = measured_settings(usable)
+    settings = Settings()
     print(f"τ = {settings.tau_s:.3f} s ({settings.tau_source})")
     rng = np.random.default_rng(args.seed)
     picked = sorted(rng.choice(len(usable), size=min(args.sessions, len(usable)), replace=False))
-    print(f"Sessions (Seed {args.seed}): " + ", ".join(usable[i].name for i in picked))
+    print(f"Sessions (seed {args.seed}): " + ", ".join(usable[i].name for i in picked))
 
     results = [r for i in picked for r in measure(usable[i], settings, args.runs)]
-    print("\nSession            Modalität  Übereinst.  p-Spanne  F1-Spanne  Modell / Abruf")
+    print("\nSession            Modality   Agreement   p spread  F1 range   Model / retrieved")
     for r in results:
         print(f"{r.session:18s} {r.modality:9s}  {r.agreement:9.2f}  {r.p_spread:8.3f}  "
               f"{r.f1_range:9.3f}  {', '.join(r.models)} / {', '.join(r.retrieved)}")
     for modality in ("video", "audio"):
         rows = [r for r in results if r.modality == modality]
-        print(f"{modality}: Übereinstimmung Mittel {np.nanmean([r.agreement for r in rows]):.2f}, "
-              f"F1-Spanne max {np.nanmax([r.f1_range for r in rows]):.3f}")
+        print(f"{modality}: agreement mean {np.nanmean([r.agreement for r in rows]):.2f}, "
+              f"F1 range max {np.nanmax([r.f1_range for r in rows]):.3f}")
     return 0
 
 

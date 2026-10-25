@@ -50,15 +50,14 @@ _BUTTON_STYLE = (
 _NOTE_STYLE = ("color:#222; font-size:11px; padding:4px 6px; "
                "font-family:Consolas,'Courier New',monospace;")
 
-_DELETION_TITLE = "Generierte Dateien löschen"
+_DELETION_TITLE = "Delete generated files"
 
-# What a loaded corpus offers to delete: (action text, kinds of generated file).
 _DELETION_CHOICES: tuple[tuple[str, frozenset[artifacts.ArtifactKind]], ...] = (
-    ("Evidenzkurven und Aktivitätsscans löschen (.npz)…",
+    ("Delete evidence curves and activity scans (.npz)…",
      frozenset({artifacts.ArtifactKind.LANES})),
-    ("Claude-Caches löschen (.json)…",
+    ("Delete Claude caches (.json)…",
      frozenset({artifacts.ArtifactKind.MODEL_CACHES})),
-    ("Alle generierten Dateien löschen…",
+    ("Delete all generated files…",
      frozenset(artifacts.ArtifactKind)),
 )
 
@@ -91,22 +90,22 @@ class _ExperimentWorker(QObject):
             settings = self._settings
             data = experiment.load(
                 self._directories, settings,
-                on_progress=self._progress("Extraktion"),
+                on_progress=self._progress("Extraction"),
                 is_cancelled=self._is_cancelled,
             )
             if self._cancelled or not data:
                 self.failed.emit(
-                    "Abgebrochen." if self._cancelled
-                    else "Keine auswertbare Session gefunden."
+                    "Cancelled." if self._cancelled
+                    else "No session found that can be evaluated."
                 )
                 return
 
             settings = experiment.measure_sesoi(data, settings)
             primary = experiment.run(data, settings,
-                                     on_progress=self._progress("Primärlauf, Fold"),
+                                     on_progress=self._progress("Primary run, fold"),
                                      is_cancelled=self._is_cancelled)
             if self._cancelled:
-                self.failed.emit("Abgebrochen.")
+                self.failed.emit("Cancelled.")
                 return
             self.done.emit(rep.analyse(data, primary))
         except Exception as exc:                      # noqa: BLE001 — shown, not hidden
@@ -118,7 +117,7 @@ class ExperimentWindow(QDialog):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Auswertung · Informationsbeitrag der Modalitäten")
+        self.setWindowTitle("Evaluation · Information contribution of the modalities")
         self.setMinimumSize(900, 700)
         self.resize(1180, 950)
         self.setModal(False)
@@ -146,8 +145,6 @@ class ExperimentWindow(QDialog):
         and this window are always enabled and disabled together.
         """
         return list(self._deletion_actions)
-
-    # ── Construction ─────────────────────────────────────────────────────
 
     def _button(self, text: str, slot, enabled: bool = True) -> QPushButton:
         button = QPushButton(text)
@@ -179,14 +176,14 @@ class ExperimentWindow(QDialog):
         root.setContentsMargins(14, 12, 14, 12)
         root.setSpacing(8)
 
-        self._choose_button = self._button("Korpus wählen …", self._on_choose_corpus)
-        self._run_button = self._button("Auswertung starten", self._on_run, enabled=False)
-        self._cancel_button = self._button("Abbrechen", self._on_cancel, enabled=False)
-        self._export_button = self._button("CSV exportieren …", self._on_export, enabled=False)
-        self._pdf_button = self._button("Bericht (PDF) …", self._on_export_pdf, enabled=False)
+        self._choose_button = self._button("Choose corpus …", self._on_choose_corpus)
+        self._run_button = self._button("Start evaluation", self._on_run, enabled=False)
+        self._cancel_button = self._button("Cancel", self._on_cancel, enabled=False)
+        self._export_button = self._button("Export CSV …", self._on_export, enabled=False)
+        self._pdf_button = self._button("Report (PDF) …", self._on_export_pdf, enabled=False)
         self._delete_button = self._deletion_button()
         self._settings_button = self._button(
-            "Einstellungen …", self._on_open_settings, enabled=False)
+            "Settings …", self._on_open_settings, enabled=False)
 
         top = QHBoxLayout()
         for button in (self._choose_button, self._run_button, self._cancel_button,
@@ -196,7 +193,7 @@ class ExperimentWindow(QDialog):
         top.addStretch()
         root.addLayout(top)
 
-        self._corpus_label = QLabel("Kein Korpus gewählt.")
+        self._corpus_label = QLabel("No corpus chosen.")
         self._corpus_label.setWordWrap(True)
         self._corpus_label.setStyleSheet("color:#555; font-size:11px;")
         root.addWidget(self._corpus_label)
@@ -208,7 +205,7 @@ class ExperimentWindow(QDialog):
 
         self._table = QTableWidget(0, 6)
         self._table.setHorizontalHeaderLabels(
-            ["Session", "Beginn (Lauf 1)", "Ende", "Retest (Lauf 2)", "Video-Cache", "Audio-Cache"])
+            ["Session", "Begin (run 1)", "End", "Retest (run 2)", "Video cache", "Audio cache"])
         self._table.setMaximumHeight(150)
         self._table.setStyleSheet(
             "QTableWidget{background:#fff;color:#333;gridline-color:#ddd;"
@@ -253,7 +250,7 @@ class ExperimentWindow(QDialog):
         self._sections.setSpacing(4)
 
         self._charts = ReportCharts.create()
-        self._placeholder = QLabel("Noch keine Auswertung.")
+        self._placeholder = QLabel("No evaluation yet.")
         self._placeholder.setStyleSheet("color:#777; font-size:12px; padding:12px 6px;")
         self._sections.addWidget(self._placeholder)
         self._sections.addStretch()
@@ -283,11 +280,9 @@ class ExperimentWindow(QDialog):
         layout.addWidget(hint)
         return box
 
-    # ── Corpus ───────────────────────────────────────────────────────────
-
     def _on_choose_corpus(self) -> None:
         """Pick a folder of session directories and report what is usable."""
-        chosen = QFileDialog.getExistingDirectory(self, "Korpus-Verzeichnis wählen")
+        chosen = QFileDialog.getExistingDirectory(self, "Choose corpus directory")
         if chosen:
             self.open_corpus(Path(chosen))
 
@@ -295,13 +290,13 @@ class ExperimentWindow(QDialog):
         """
         Load a corpus directory without evaluating it.
 
-        The evaluation starts only from "Auswertung starten", so choosing a corpus
+        The evaluation starts only from "Start evaluation", so choosing a corpus
         never launches the extraction by itself. Refused while a run is in
         progress: that run keeps its corpus.
         """
         if self._is_running():
             self._status.setText(
-                "Auswertung läuft — der Korpus kann erst danach gewechselt werden."
+                "Evaluation running — the corpus can only be changed afterwards."
             )
             return
         self._load_corpus(root)
@@ -317,11 +312,11 @@ class ExperimentWindow(QDialog):
         for row, info in enumerate(scanned.sessions):
             for column, text in enumerate((
                 info.name,
-                str(info.n_begin) if info.annotated else "— keine „Beginn“-GT —",
+                str(info.n_begin) if info.annotated else "— no 'begin' GT —",
                 str(info.n_end) if info.n_end else "–",
                 str(info.n_retest) if info.n_retest else "–",
-                "ja" if info.has_video_cache else "nein",
-                "ja" if info.has_audio_cache else "nein",
+                "yes" if info.has_video_cache else "no",
+                "yes" if info.has_audio_cache else "no",
             )):
                 item = QTableWidgetItem(text)
                 if not info.annotated:
@@ -342,13 +337,13 @@ class ExperimentWindow(QDialog):
         try:
             self._settings = load_settings(path)
         except (ValueError, TypeError) as exc:
-            self._settings_label.setText(f"⚠ {path.name} ungültig: {exc}")
+            self._settings_label.setText(f"⚠ {path.name} invalid: {exc}")
             return False
         s = self._settings
         self._settings_label.setText(
-            f"Einstellungen ({path.name}{'' if path.exists() else ', Standardwerte'}): "
-            f"{s.decider} · Kandidaten {s.candidate_pool} · Definition {s.boundary_definition} · "
-            f"τ = {s.tau_s:g} s, SESOI = 1 Grenze · Intervalle 95 %"
+            f"Settings ({path.name}{'' if path.exists() else ', defaults'}): "
+            f"{s.decider} · candidates {s.candidate_pool} · definition {s.boundary_definition} · "
+            f"τ = {s.tau_s:g} s, SESOI = 1 boundary · intervals 95 %"
         )
         return True
 
@@ -361,10 +356,8 @@ class ExperimentWindow(QDialog):
             save_settings(self._settings, path)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
         self._status.setText(
-            f"{path.name} geöffnet — nach dem Speichern den Korpus neu wählen, um sie zu laden."
+            f"{path.name} opened — after saving, choose the corpus again to load it."
         )
-
-    # ── Run ──────────────────────────────────────────────────────────────
 
     def _on_run(self) -> None:
         self._run_button.setEnabled(False)
@@ -391,7 +384,7 @@ class ExperimentWindow(QDialog):
     def _on_cancel(self) -> None:
         if self._worker is not None:
             self._worker.cancel()
-        self._status.setText("Abbruch angefordert — laufender Schritt wird beendet …")
+        self._status.setText("Cancellation requested — finishing the current step …")
 
     def _on_progress(self, label: str, done: int, total: int) -> None:
         self._progress.setRange(0, total)
@@ -414,8 +407,8 @@ class ExperimentWindow(QDialog):
     def _on_failed(self, message: str) -> None:
         self._stop_spinner()
         self._reset_buttons()
-        self._status.setText(f"Fehlgeschlagen: {message.splitlines()[0]}")
-        QMessageBox.warning(self, "Auswertung fehlgeschlagen", message)
+        self._status.setText(f"Failed: {message.splitlines()[0]}")
+        QMessageBox.warning(self, "Evaluation failed", message)
 
     def _on_done(self, result: rep.Report) -> None:
         self._stop_spinner()
@@ -437,8 +430,6 @@ class ExperimentWindow(QDialog):
     def _is_running(self) -> bool:
         return self._thread is not None and self._thread.isRunning()
 
-    # ── Generated files ──────────────────────────────────────────────────
-
     def _set_deletion_enabled(self, enabled: bool) -> None:
         """Deleting needs a loaded corpus and no run that could be writing to it."""
         self._delete_button.setEnabled(enabled)
@@ -459,7 +450,7 @@ class ExperimentWindow(QDialog):
         paths = artifacts.find(root, kinds)
         if not paths:
             QMessageBox.information(
-                self, _DELETION_TITLE, "Im Korpus gibt es keine generierten Dateien dieser Art."
+                self, _DELETION_TITLE, "The corpus contains no generated files of this kind."
             )
             return
         if not self._confirm_deletion(root, paths, kinds):
@@ -474,13 +465,13 @@ class ExperimentWindow(QDialog):
         """Ask before deleting; the full file list is one click away in the details."""
         sessions = len({path.parent for path in paths})
         text = (
-            f"{len(paths)} Dateien ({format_bytes(artifacts.total_size(paths))}) "
-            f"in {sessions} Session(s) löschen?\n\n"
-            "Aufnahme, events.json und Ground Truth bleiben unverändert. Gelöschte "
-            "Dateien werden beim nächsten Öffnen oder Auswerten neu erzeugt."
+            f"Delete {len(paths)} files ({format_bytes(artifacts.total_size(paths))}) "
+            f"in {sessions} session(s)?\n\n"
+            "Recording, events.json and ground truth stay unchanged. Deleted "
+            "files are regenerated the next time they are opened or evaluated."
         )
         if artifacts.ArtifactKind.MODEL_CACHES in kinds:
-            text += "\nGelöschte Claude-Caches lösen dabei neue, kostenpflichtige Modellaufrufe aus."
+            text += "\nDeleted Claude caches trigger new, paid model calls in the process."
 
         box = QMessageBox(
             QMessageBox.Icon.Warning,
@@ -494,16 +485,14 @@ class ExperimentWindow(QDialog):
         return box.exec() == QMessageBox.StandardButton.Yes
 
     def _report_deletion(self, result: artifacts.DeletionResult) -> None:
-        self._status.setText(f"{len(result.deleted)} generierte Dateien gelöscht.")
+        self._status.setText(f"{len(result.deleted)} generated files deleted.")
         if result.failed:
             QMessageBox.warning(
                 self,
                 _DELETION_TITLE,
-                "Nicht alle Dateien konnten gelöscht werden:\n\n"
+                "Not all files could be deleted:\n\n"
                 + "\n".join(f"{path}: {reason}" for path, reason in result.failed.items()),
             )
-
-    # ── Rendering ────────────────────────────────────────────────────────
 
     def _clear_sections(self) -> None:
         """Remove everything but the chart widgets, which are reused."""
@@ -531,14 +520,12 @@ class ExperimentWindow(QDialog):
                 self._sections.addWidget(note)
         self._sections.addStretch()
 
-    # ── Export ───────────────────────────────────────────────────────────
-
     def _on_export_pdf(self) -> None:
         """Write a paginated PDF report of the current result: metrics + charts."""
         if self._result is None:
             return
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "Bericht speichern", "auswertung.pdf", "PDF (*.pdf)")
+            self, "Save report", "evaluation.pdf", "PDF (*.pdf)")
         if not chosen:
             return
         if not chosen.lower().endswith(".pdf"):
@@ -546,22 +533,21 @@ class ExperimentWindow(QDialog):
         try:
             write_report_pdf(Path(chosen), self._result, self._corpus_root)
         except Exception as exc:                       # noqa: BLE001 — shown, not hidden
-            QMessageBox.warning(self, "PDF-Export fehlgeschlagen", str(exc))
+            QMessageBox.warning(self, "PDF export failed", str(exc))
             return
-        self._status.setText(f"Bericht exportiert nach {chosen}")
+        self._status.setText(f"Report exported to {chosen}")
 
     def _on_export(self) -> None:
-        """Write the tidy tables of every design run; the thesis figures are
-        built from this file."""
+        """Write the tidy tables of every design run."""
         if self._result is None:
             return
         chosen, _ = QFileDialog.getSaveFileName(
-            self, "Ergebnistabelle speichern", "ergebnisse.csv", "CSV (*.csv)")
+            self, "Save results table", "results.csv", "CSV (*.csv)")
         if not chosen:
             return
         r = self._result
         experiment.write_csv(r.rows, Path(chosen))
-        self._status.setText(f"Exportiert nach {chosen}")
+        self._status.setText(f"Exported to {chosen}")
 
     def closeEvent(self, event) -> None:
         """Stop a running evaluation; cached model verdicts survive."""

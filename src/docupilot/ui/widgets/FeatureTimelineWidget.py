@@ -118,8 +118,6 @@ class FeatureTimelineWidget(QWidget):
         frac = max(0.0, min(1.0, frac))
         self.seek_requested.emit(frac * self._duration_ms)
 
-    # ── Painting ─────────────────────────────────────────────────────────
-
     def _x_of(self, t_ms: float, plot_w: int) -> int:
         return self._PAD_L + int(t_ms / self._duration_ms * plot_w)
 
@@ -234,7 +232,7 @@ class FeatureTimelineWidget(QWidget):
             marker_color = QColor("#c026d3")
             line_pen = QPen(marker_color)
             line_pen.setWidth(2)
-            s = 5   # triangle half-width
+            s = 5
             for t_ms in self._detected_boundaries:
                 bx = self._x_of(t_ms, plot_w)
                 p.setPen(line_pen)
@@ -256,5 +254,5 @@ class FeatureTimelineWidget(QWidget):
         p.fillRect(0, 0, self.width(), self.height(), QColor("#ffffff"))
         p.setPen(QColor("#888"))
         p.setFont(QFont("sans-serif", 11))
-        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Keine Daten verfügbar")
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "No data available")
         p.end()

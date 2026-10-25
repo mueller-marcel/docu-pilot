@@ -58,7 +58,7 @@ _load_dotenv()
 MODEL = os.environ.get("DOCUPILOT_MODEL", "claude-sonnet-5")
 
 # The ONE definition both prompts judge against — the sub-goal after Kurby &
-# Zacks (2008), as the thesis uses it (MA 2.2, 3.1.3): an activity is perceived
+# Zacks (2008): an activity is perceived
 # as a hierarchy, the task divided into sub-goals, each carried out by finer
 # actions; a boundary lies where the sub-goal changes, at its first perceivable
 # hint; a correction changes no sub-goal. Kept here so the two prompts cannot
@@ -118,7 +118,7 @@ class JsonVerdictCache:
 
     Every entry carries the model ID and the retrieval date next to the
     verdict: temperature 0 is not fully deterministic on API models, so which
-    model answered when is part of the result (C11). Entries written before
+    model answered when is part of the result. Entries written before
     that are bare verdicts and still read, with empty provenance.
 
     A file that cannot be read, or an entry that does not fit the current

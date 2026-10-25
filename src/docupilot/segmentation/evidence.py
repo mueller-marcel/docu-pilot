@@ -4,7 +4,7 @@ What every modality returns, and the two ways of drawing evidence onto a curve.
 The shared vocabulary of the segmentation package — deliberately the only thing
 the three modality modules have in common.
 
-The curves follow MA 3.2.2: a hint at a point in time becomes a Gaussian bell
+The curves follow one rule: a hint at a point in time becomes a Gaussian bell
 as wide as the tolerance window (σ = τ/3, cut off at 3σ = ±τ), a spoken
 sentence a raised-cosine bell over its own interval; several entries are
 merged by pointwise maximum, and every curve is sampled on the GRID_HZ grid
@@ -25,7 +25,6 @@ __all__ = [
     "draw_gaussian", "draw_window", "grid",
 ]
 
-# At or above this probability a modality commits to a boundary.
 BOUNDARY_THRESHOLD = 0.5
 
 # Beyond 3σ a bell is below 1.2 % of its height and is cut off.
@@ -44,8 +43,8 @@ class BoundaryEvidence:
     decomposition stays one over three players.
     """
 
-    times_s: np.ndarray          # (T,) float64 — timestamp per sample
-    score: np.ndarray            # (T,) float32 — graded evidence in [0, 1]
+    times_s: np.ndarray
+    score: np.ndarray
     boundaries_s: list[float]
     channels: Mapping[str, np.ndarray] = field(default_factory=dict)
 

@@ -1,5 +1,5 @@
 """
-Shapley values (TF2), the saturation curve and the gains Δ(k) (TF3): on whole
+Shapley values, the saturation curve and the gains Δ(k): on whole
 games and per session, as the report computes them.
 """
 
@@ -21,11 +21,8 @@ def game(**by_label):
     }
 
 
-# The coalition means of the v5 run (auswertung_v5.pdf, Abb. 4.3).
-V5 = game(none=0.117, S=0.636, E=0.339, V=0.339, ES=0.662, SV=0.646, EV=0.395, ESV=0.687)
+EXAMPLE = game(none=0.117, S=0.636, E=0.339, V=0.339, ES=0.662, SV=0.646, EV=0.395, ESV=0.687)
 
-
-# ── Shapley values ───────────────────────────────────────────────────────────
 
 def test_additive_game_gives_each_modality_its_own_contribution():
     base, add = 0.1, {S: 0.5, E: 0.2, V: 0.1}
@@ -34,13 +31,13 @@ def test_additive_game_gives_each_modality_its_own_contribution():
 
 
 def test_efficiency_values_sum_to_full_minus_empty():
-    phi = analysis.shapley(V5, PLAYERS)
+    phi = analysis.shapley(EXAMPLE, PLAYERS)
     assert sum(phi.values()) == pytest.approx(0.687 - 0.117)
-    assert analysis.efficiency_error(V5, PLAYERS, phi) == pytest.approx(0.0, abs=1e-12)
+    assert analysis.efficiency_error(EXAMPLE, PLAYERS, phi) == pytest.approx(0.0, abs=1e-12)
 
 
-def test_v5_shapley_values_reproduce_the_report():
-    phi = analysis.shapley(V5, PLAYERS)
+def test_shapley_values_of_the_example_game():
+    phi = analysis.shapley(EXAMPLE, PLAYERS)
     assert phi[S] == pytest.approx(0.375, abs=5e-4)
     assert phi[E] == pytest.approx(0.101, abs=5e-4)
     assert phi[V] == pytest.approx(0.093, abs=5e-4)
@@ -61,7 +58,7 @@ def test_redundant_modalities_share_their_contribution():
 
 
 def test_missing_coalition_is_an_error():
-    values = dict(V5)
+    values = dict(EXAMPLE)
     del values[frozenset({E, V})]
     with pytest.raises(KeyError):
         analysis.shapley(values, PLAYERS)
@@ -73,38 +70,34 @@ def test_full_factorial_design_has_eight_coalitions():
     assert coalitions[0] == frozenset() and coalitions[-1] == frozenset(PLAYERS)
 
 
-# ── Saturation curve and Δ(k) ────────────────────────────────────────────────
-
 def test_saturation_curve_is_the_mean_per_size():
-    curve = analysis.saturation(V5, PLAYERS)
+    curve = analysis.saturation(EXAMPLE, PLAYERS)
     assert curve[0] == pytest.approx(0.117)
     assert curve[1] == pytest.approx((0.636 + 0.339 + 0.339) / 3)
     assert curve[2] == pytest.approx((0.662 + 0.646 + 0.395) / 3)
     assert curve[3] == pytest.approx(0.687)
 
 
-def test_v5_gains_reproduce_the_report():
-    gains = analysis.marginal_gain(analysis.saturation(V5, PLAYERS))
+def test_gains_of_the_example_game():
+    gains = analysis.marginal_gain(analysis.saturation(EXAMPLE, PLAYERS))
     assert gains == pytest.approx({1: 0.321, 2: 0.130, 3: 0.119}, abs=5e-4)
 
 
 def test_gains_add_up_to_full_minus_empty():
-    gains = analysis.marginal_gain(analysis.saturation(V5, PLAYERS))
+    gains = analysis.marginal_gain(analysis.saturation(EXAMPLE, PLAYERS))
     assert sum(gains.values()) == pytest.approx(0.687 - 0.117)
 
 
-# ── Per session, as the report computes them ─────────────────────────────────
-
 def per_session():
     """Two sessions; the second is the first shifted by +0.1 in every coalition."""
-    s1 = V5
-    s2 = {c: v + 0.1 for c, v in V5.items()}
-    return {c: {"s1": s1[c], "s2": s2[c]} for c in V5}
+    s1 = EXAMPLE
+    s2 = {c: v + 0.1 for c, v in EXAMPLE.items()}
+    return {c: {"s1": s1[c], "s2": s2[c]} for c in EXAMPLE}
 
 
 def test_shapley_per_session_is_computed_per_session():
     phi = st.shapley_per_session(per_session(), PLAYERS)
-    whole = analysis.shapley(V5, PLAYERS)
+    whole = analysis.shapley(EXAMPLE, PLAYERS)
     # A constant shift moves v(∅) too, so no modality gains from it.
     for p in PLAYERS:
         assert phi[p]["s1"] == pytest.approx(whole[p])
@@ -113,7 +106,7 @@ def test_shapley_per_session_is_computed_per_session():
 
 def test_steps_per_session_match_the_curve_of_each_session():
     steps = st.steps_per_session(per_session(), PLAYERS)
-    gains = analysis.marginal_gain(analysis.saturation(V5, PLAYERS))
+    gains = analysis.marginal_gain(analysis.saturation(EXAMPLE, PLAYERS))
     for k in (1, 2, 3):
         assert steps[k]["s1"] == pytest.approx(gains[k])
         assert steps[k]["s2"] == pytest.approx(gains[k])
