@@ -23,14 +23,17 @@ class BarChartWidget(QWidget):
     """
     One horizontal bar per row with its 95 % confidence interval as whisker,
     against a zero line — single modalities, combinations, Shapley values and
-    gains. With `band`, a grey area marks ±band (the SESOI), labelled above the
-    plot: a whisker that stays inside it is a gain too small to matter.
+    gains. With `band`, a grey area marks `band_center` ± band (the SESOI),
+    labelled above the plot: a whisker that stays inside it is a difference too
+    small to matter. The centre is 0 for gains and v(∅) for the F1 charts; the
+    bars always start at the zero line.
     """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._rows: list[tuple[str, float, float, float, str]] = []
         self._band: float | None = None
+        self._band_center = 0.0
         self._axis_title = ""
         self.setMinimumHeight(140)
         self.setStyleSheet(f"background:{BACKGROUND};")
@@ -40,15 +43,18 @@ class BarChartWidget(QWidget):
         rows: list[tuple[str, float, float, float, str]],
         axis_title: str = "",
         band: float | None = None,
+        band_center: float = 0.0,
     ) -> None:
         """
         :param rows: (label, value, ci_low, ci_high, hex colour), top to bottom.
         :param axis_title: the x-axis label under the ticks.
-        :param band: half-width of the ±band drawn around zero, or None.
+        :param band: half-width of the grey band, or None for no band.
+        :param band_center: where the band is centred — 0 (gains) or v(∅).
         """
         self._rows = rows
         self._axis_title = axis_title
         self._band = band
+        self._band_center = band_center
         top = _TOP_BAND if band is not None else _TOP_PLAIN
         self.setMinimumHeight(top + _ROW_HEIGHT * len(rows) + _BOTTOM)
         self.update()
@@ -68,8 +74,10 @@ class BarChartWidget(QWidget):
         plot_bottom = plot_top + _ROW_HEIGHT * len(self._rows)
 
         band = self._band or 0.0
-        low = min(0.0, -band, min(r[2] for r in self._rows))
-        high = max(0.0, band, max(r[3] for r in self._rows))
+        centre = self._band_center
+        band_low, band_high = centre - band, centre + band
+        low = min(0.0, band_low, min(r[2] for r in self._rows))
+        high = max(0.0, band_high, max(r[3] for r in self._rows))
         pad = max((high - low) * 0.06, 0.005)
         low, high = low - pad, high + pad
 
@@ -79,14 +87,16 @@ class BarChartWidget(QWidget):
         small, tiny = small_fonts(self.font())
 
         if self._band is not None:
-            painter.fillRect(QRectF(x_of(-band), plot_top, x_of(band) - x_of(-band),
+            painter.fillRect(QRectF(x_of(band_low), plot_top, x_of(band_high) - x_of(band_low),
                                     plot_bottom - plot_top), QColor(_BAND))
             painter.setFont(small)
-            for edge, label in ((-band, "−SESOI"), (band, "+SESOI")):
+            labels = ((band_low, "−SESOI"), (band_high, "+SESOI")) if centre == 0.0 else (
+                (band_low, "v(∅) − SESOI"), (band_high, "v(∅) + SESOI"))
+            for edge, label in labels:
                 painter.setPen(QPen(QColor(MUTED), 1, Qt.PenStyle.DashLine))
                 painter.drawLine(int(x_of(edge)), plot_top, int(x_of(edge)), plot_bottom)
                 painter.setPen(QColor(TEXT))
-                painter.drawText(QRectF(x_of(edge) - 40, 2, 80, 18),
+                painter.drawText(QRectF(x_of(edge) - 50, 2, 100, 18),
                                  int(Qt.AlignmentFlag.AlignHCenter), label)
 
         painter.setPen(QPen(QColor(AXIS), 1))

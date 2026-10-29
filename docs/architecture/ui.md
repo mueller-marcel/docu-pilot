@@ -27,7 +27,7 @@ report numbers to charts lives exactly once in
 
 | Chart | Widget |
 |---|---|
-| Sub-question 1, Sub-question 2 (F1 per combination, Shapley), Sub-question 3 (gains) | {py:class}`~docupilot.ui.widgets.BarChartWidget.BarChartWidget` – horizontal bars with 95 % interval, optional ±SESOI band |
+| Sub-question 1, Sub-question 2 (F1 per combination, Shapley), Sub-question 3 (gains) | {py:class}`~docupilot.ui.widgets.BarChartWidget.BarChartWidget` – horizontal bars with 95 % interval, optional grey SESOI band around `band_center`: 0 for the gains (±SESOI), v(∅) for the F1 charts of sub-questions 1 and 2 (v(∅) ± SESOI); the bars always start at zero |
 | Sub-question 3 (saturation curve) | {py:class}`~docupilot.ui.widgets.SaturationChartWidget.SaturationChartWidget` – line with increments between the points |
 
 {py:func}`~docupilot.ui.ReportPdfWriter.write_report_pdf` renders the same

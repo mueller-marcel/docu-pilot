@@ -65,6 +65,31 @@ def test_tf2_bars_are_all_eight_combinations_with_the_empty_one_last():
     assert [b[1] for b in bars[:-1]] == sorted((b[1] for b in bars[:-1]), reverse=True)
 
 
+def test_baseline_is_the_mean_f1_without_any_modality():
+    r = rep.analyse([], result())
+    assert r.baseline == pytest.approx(0.1)
+    assert r.baseline == r.subsets[frozenset()].est
+    assert r.baseline == pytest.approx(rep.subset_bars(r)[-1][1])
+    assert r.baseline == pytest.approx(rep.single_bars(r)[-1][1])
+    assert r.sesoi == pytest.approx(0.11)
+
+
+def test_f1_charts_state_baseline_sesoi_and_sessions_under_the_bars():
+    r = rep.analyse([], result())
+    line = "v(∅) = 0,100   ·   SESOI = 0,110   ·   4 sessions"
+    assert rep.singles_text(r).splitlines()[-1].strip() == line
+    assert rep.subsets_text(r).splitlines()[-1].strip() == line
+    assert len(rep.subsets_text(r).splitlines()) == 9
+
+
+def test_f1_chart_hints_name_the_band_and_the_gain_chart_keeps_its_own():
+    by_chart = {s.chart: s for s in rep.sections(rep.analyse([], result()))}
+    assert "v(∅) ± SESOI" in by_chart["singles"].hint
+    assert "v(∅) ± SESOI" in by_chart["subsets"].hint
+    assert "±SESOI" in by_chart["steps"].hint
+    assert "SESOI" not in by_chart["shapley"].hint
+
+
 def test_tf3_steps_are_classified_against_the_sesoi():
     r = rep.analyse([], result())
     assert [b[0] for b in rep.step_bars(r)] == ["Modality 1", "Modality 2", "Modality 3"]

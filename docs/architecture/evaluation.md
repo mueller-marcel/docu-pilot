@@ -111,11 +111,17 @@ figures:
 
 | Figure | Content |
 |---|---|
-| Sub-question 1 | F1 of the single modalities and without any modality, with 95 % interval |
-| Sub-question 2 | F1 of all eight combinations, with 95 % interval |
+| Sub-question 1 | F1 of the single modalities and without any modality, with 95 % interval and v(∅) ± SESOI band |
+| Sub-question 2 | F1 of all eight combinations, with 95 % interval and v(∅) ± SESOI band |
 | Sub-question 2 | Shapley value per modality, with 95 % interval |
 | Sub-question 3 | Saturation curve: mean F1 per number of modalities, increments between the points |
 | Sub-question 3 | Gain Δ(k) per added modality, with 95 % interval and ±SESOI band |
+
+The band of the two F1 figures is centred on the baseline v(∅)
+({py:attr}`~docupilot.evaluation.report.Report.baseline`, the mean F1 over the sessions
+without any modality) and extends by the SESOI to both sides. It only displays the
+same SESOI that classifies the gains; no number is computed differently. Below each of
+the two figures the report states v(∅), the SESOI and the number of sessions.
 
 In addition, the status line with the F1 of all modalities and the ratio of placed to
 annotated boundaries. How the values arise: {doc}`../concepts/statistics`.

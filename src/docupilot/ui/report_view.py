@@ -41,8 +41,10 @@ class ReportCharts:
 
 def apply_report(charts: ReportCharts, report: rep.Report) -> None:
     """Push a report's numbers into the given chart widgets."""
-    charts.singles.set_values(rep.single_bars(report), axis_title="F1 score")
-    charts.subsets.set_values(rep.subset_bars(report), axis_title="F1 score")
+    charts.singles.set_values(rep.single_bars(report), axis_title="F1 score",
+                              band=report.sesoi, band_center=report.baseline)
+    charts.subsets.set_values(rep.subset_bars(report), axis_title="F1 score",
+                              band=report.sesoi, band_center=report.baseline)
     charts.shapley.set_values(rep.shapley_bars(report),
                               axis_title="Shapley value (gain in F1 score)")
     charts.saturation.set_values(report.curve)
