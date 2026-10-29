@@ -74,6 +74,15 @@ def test_baseline_is_the_mean_f1_without_any_modality():
     assert r.sesoi == pytest.approx(0.11)
 
 
+def test_f1_charts_get_the_band_around_the_baseline_and_the_gains_around_zero():
+    r = rep.analyse([], result())
+    for chart in ("singles", "subsets"):
+        assert rep.chart_band(r, chart) == pytest.approx((r.sesoi, r.baseline))
+    assert rep.chart_band(r, "steps") == (r.sesoi, 0.0)
+    assert rep.chart_band(r, "shapley") == (None, 0.0)
+    assert rep.chart_band(r, "saturation") == (None, 0.0)
+
+
 def test_f1_charts_state_baseline_sesoi_and_sessions_under_the_bars():
     r = rep.analyse([], result())
     line = "v(∅) = 0,100   ·   SESOI = 0,110   ·   4 sessions"

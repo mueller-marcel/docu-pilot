@@ -157,6 +157,18 @@ def step_bars(report: Report) -> list[Bar]:
     return [(f"Modality {k}", e.est, e.lo, e.hi, BAR) for k, e in sorted(report.steps.items())]
 
 
+def chart_band(report: Report, chart: str) -> tuple[float | None, float]:
+    """
+    The grey SESOI band of a chart as (half-width, centre): v(∅) ± SESOI on the
+    two F1 charts, ±SESOI around zero on the gains, none (None) elsewhere.
+    """
+    if chart in ("singles", "subsets"):
+        return report.sesoi, report.baseline
+    if chart == "steps":
+        return report.sesoi, 0.0
+    return None, 0.0
+
+
 def _num(value: float, signed: bool = False) -> str:
     """A number with three decimals and a decimal comma."""
     return f"{value:{'+' if signed else ''}.3f}".replace(".", ",")

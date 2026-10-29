@@ -41,15 +41,20 @@ class ReportCharts:
 
 def apply_report(charts: ReportCharts, report: rep.Report) -> None:
     """Push a report's numbers into the given chart widgets."""
+    def band(chart: str) -> dict:
+        width, centre = rep.chart_band(report, chart)
+        return {"band": width, "band_center": centre}
+
     charts.singles.set_values(rep.single_bars(report), axis_title="F1 score",
-                              band=report.sesoi, band_center=report.baseline)
+                              **band("singles"))
     charts.subsets.set_values(rep.subset_bars(report), axis_title="F1 score",
-                              band=report.sesoi, band_center=report.baseline)
+                              **band("subsets"))
     charts.shapley.set_values(rep.shapley_bars(report),
-                              axis_title="Shapley value (gain in F1 score)")
+                              axis_title="Shapley value (gain in F1 score)",
+                              **band("shapley"))
     charts.saturation.set_values(report.curve)
     charts.steps.set_values(rep.step_bars(report), axis_title="Gain Δ(k) in F1 score",
-                            band=report.sesoi)
+                            **band("steps"))
 
 
 def build_charts(report: rep.Report) -> ReportCharts:
