@@ -2,8 +2,10 @@
 The finished evaluation of one corpus: the report's figures and the numbers
 behind them.
 
-    singles     F1 of every single modality and of none — bars, 95 % interval
-    subsets     F1 of all eight modality combinations — bars, 95 % interval
+    singles     F1 of every single modality and of none — bars, 95 % interval,
+                v(∅) ± SESOI band
+    subsets     F1 of all eight modality combinations — bars, 95 % interval,
+                v(∅) ± SESOI band
     shapley     Shapley value of every modality — bars, 95 % interval
     saturation  saturation curve, mean F1 per number of modalities, with the
                 gain written between the points
@@ -64,6 +66,11 @@ class Report:
     @property
     def sesoi(self) -> float:
         return self.settings.sesoi_value
+
+    @property
+    def baseline(self) -> float:
+        """v(∅): the mean over the sessions of the F1 without any modality."""
+        return self.subsets[_EMPTY].est
 
 
 def count_ratio(rows: Sequence[dict], subset: frozenset[str]) -> float:
@@ -150,6 +157,18 @@ def step_bars(report: Report) -> list[Bar]:
     return [(f"Modality {k}", e.est, e.lo, e.hi, BAR) for k, e in sorted(report.steps.items())]
 
 
+def chart_band(report: Report, chart: str) -> tuple[float | None, float]:
+    """
+    The grey SESOI band of a chart as (half-width, centre): v(∅) ± SESOI on the
+    two F1 charts, ±SESOI around zero on the gains, none (None) elsewhere.
+    """
+    if chart in ("singles", "subsets"):
+        return report.sesoi, report.baseline
+    if chart == "steps":
+        return report.sesoi, 0.0
+    return None, 0.0
+
+
 def _num(value: float, signed: bool = False) -> str:
     """A number with three decimals and a decimal comma."""
     return f"{value:{'+' if signed else ''}.3f}".replace(".", ",")
@@ -166,14 +185,22 @@ def _saturation_sentence(point: SaturationPoint, n_players: int) -> str:
             "or not statistically significant")
 
 
+def _band_line(report: Report) -> str:
+    """The numbers behind the grey band v(∅) ± SESOI and the sessions it rests on."""
+    return (f"   v(∅) = {_num(report.baseline)}   ·   SESOI = {_num(report.sesoi)}   ·   "
+            f"{report.n_sessions} sessions")
+
+
 def singles_text(report: Report) -> str:
-    return "\n".join(f"   {label:24s} {_num(v)}  [{_num(lo)}; {_num(hi)}]"
-                     for label, v, lo, hi, _ in single_bars(report))
+    lines = [f"   {label:24s} {_num(v)}  [{_num(lo)}; {_num(hi)}]"
+             for label, v, lo, hi, _ in single_bars(report)]
+    return "\n".join([*lines, _band_line(report)])
 
 
 def subsets_text(report: Report) -> str:
-    return "\n".join(f"   {label:8s} {_num(v)}  [{_num(lo)}; {_num(hi)}]"
-                      for label, v, lo, hi, _ in subset_bars(report))
+    lines = [f"   {label:8s} {_num(v)}  [{_num(lo)}; {_num(hi)}]"
+             for label, v, lo, hi, _ in subset_bars(report)]
+    return "\n".join([*lines, _band_line(report)])
 
 
 def shapley_text(report: Report) -> str:
@@ -242,11 +269,12 @@ def sections(report: Report) -> list[Section]:
         Section("Sub-question 1 · Segmentation quality of the single modalities with "
                 "confidence interval",
                 "Bars = mean F1 score over the sessions, whiskers = 95 % confidence interval; "
-                "grey = no modality.",
+                "grey bar = no modality, grey band = v(∅) ± SESOI.",
                 chart="singles", text=singles_text(report)),
         Section("Sub-question 2 · F1 scores per modality combination",
                 "Bars = mean F1 score, whiskers = 95 % confidence interval; "
-                "E = events, S = speech, V = video, ( ) = no modality.",
+                "E = events, S = speech, V = video, ( ) = no modality, "
+                "grey band = v(∅) ± SESOI.",
                 chart="subsets", text=subsets_text(report)),
         Section("Sub-question 2 · Shapley values with confidence interval",
                 "Bars = marginal contribution (gain in F1 score), whiskers = "
